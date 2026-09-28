@@ -1,0 +1,19 @@
+# Self-hosted (VPS): Caddy serves the site + free HTTPS.  Replace yourdomain.com
+yourdomain.com {
+	root * /srv/site
+	encode gzip zstd
+	file_server
+
+	# HTML always revalidated; versioned css/js (?v=) can be cached hard
+	@html path / /admin /admin/ *.html
+	header @html Cache-Control "no-cache"
+	@assets path *.css *.js
+	header @assets Cache-Control "public, max-age=604800"
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	# Later, when the API exists:
+	# handle /api/* { reverse_proxy api:3000 }
+}

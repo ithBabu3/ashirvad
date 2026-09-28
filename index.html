@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en" id="htmlRoot">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a1322">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AshirvadConnect">
+<title>AshirvadConnect — Dealer B2B Ordering Portal</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Poppins:wght@400;500;600;700&family=Noto+Sans+Tamil:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Styles -->
+<link rel="stylesheet" href="css/vendor/bootstrap.min.css?v=1.2.0">
+<link rel="stylesheet" href="css/style.css?v=1.2.0">
+
+<!-- Libraries (kept local so the portal works without any CDN) -->
+<script src="js/vendor/xlsx.mini.js?v=1.2.0"></script>
+<script src="js/vendor/qrcode.js?v=1.2.0"></script>
+</head>
+<body>
+<!-- ================= AUTH SCREEN ================= -->
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-head">
+      <div class="brand-mark">
+        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="20" cy="20" r="12" stroke="#e6c878" stroke-width="2"/>
+          <circle cx="20" cy="20" r="6" stroke="#e6c878" stroke-width="1.6"/>
+        </svg>
+      </div>
+      <div class="name">Ashirvad<span class="accent">Connect</span></div>
+      <div class="tag" data-i18n="auth.tagline">Dealer B2B ordering portal</div>
+    </div>
+    <div class="auth-tabs">
+      <button type="button" id="tabLogin" class="active" data-i18n="auth.login">Login</button>
+      <button type="button" id="tabRegister" data-i18n="auth.register">Register</button>
+    </div>
+    <div class="auth-body">
+
+      <form id="loginForm">
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.loginPhone">Phone Number</label>
+          <input type="tel" class="form-control" id="loginPhone" autocomplete="off" maxlength="10" placeholder="10-digit phone number">
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.password">Password</label>
+          <div class="pw-wrap">
+            <input type="password" class="form-control" id="loginPassword">
+            <button type="button" class="pw-toggle" data-pw-target="loginPassword" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <div class="form-err" id="loginErr"></div>
+        <button type="submit" class="btn-royal mt-2" data-i18n="auth.loginBtn">Login</button>
+        <div class="auth-alt">
+          <span data-i18n="auth.noAccount">New dealer account?</span>
+          <a href="#" id="goRegister" data-i18n="auth.register">Register</a>
+        </div>
+      </form>
+
+      <form id="registerForm" class="d-none">
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.businessName">Business Name</label>
+          <input type="text" class="form-control" id="regBusiness">
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.gst">GST Number</label>
+          <input type="text" class="form-control" id="regGst" placeholder="22AAAAA0000A1Z5">
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.phone">Phone Number</label>
+          <input type="tel" class="form-control" id="regPhone" maxlength="10">
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.address">Business Address</label>
+          <textarea class="form-control" id="regAddress" rows="2"></textarea>
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.password">Password</label>
+          <div class="pw-wrap">
+            <input type="password" class="form-control" id="regPassword">
+            <button type="button" class="pw-toggle" data-pw-target="regPassword" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label" data-i18n="auth.confirmPassword">Confirm Password</label>
+          <div class="pw-wrap">
+            <input type="password" class="form-control" id="regConfirmPassword">
+            <button type="button" class="pw-toggle" data-pw-target="regConfirmPassword" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <div class="form-err" id="regErr"></div>
+        <button type="submit" class="btn-royal mt-2" data-i18n="auth.registerBtn">Create account</button>
+        <div class="auth-alt">
+          <span data-i18n="auth.haveAccount">Already registered?</span>
+          <a href="#" id="goLogin" data-i18n="auth.login">Login</a>
+        </div>
+      </form>
+
+      <div class="demo-note" data-i18n="auth.demoNote">Demo mode — accounts are stored on this device only, for evaluation purposes.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ADMIN LOGIN SCREEN ================= -->
+<div id="adminScreen" class="d-none">
+  <div class="auth-card">
+    <div class="auth-head" style="background:linear-gradient(160deg, var(--navy-950), var(--maroon-600));">
+      <div class="brand-mark">
+        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="20" cy="20" r="12" stroke="#e6c878" stroke-width="2"/>
+          <circle cx="20" cy="20" r="6" stroke="#e6c878" stroke-width="1.6"/>
+        </svg>
+      </div>
+      <div class="name">Ashirvad<span class="accent">Connect</span></div>
+      <div class="tag">Admin Console</div>
+    </div>
+    <div class="auth-body">
+      <form id="adminLoginForm">
+        <div class="mb-2">
+          <label class="form-label">Admin Username</label>
+          <input type="text" class="form-control" id="adminUser" autocomplete="off">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Password</label>
+          <div class="pw-wrap">
+            <input type="password" class="form-control" id="adminPass">
+            <button type="button" class="pw-toggle" data-pw-target="adminPass" aria-label="Show password">👁</button>
+          </div>
+        </div>
+        <div class="form-err" id="adminLoginErr"></div>
+        <button type="submit" class="btn-royal mt-2" style="background:var(--maroon-600); border-color:var(--maroon-600);">Login to Admin</button>
+        <div class="auth-alt"><a href="#" id="adminBackToStore">← Back to store</a></div>
+      </form>
+      <div class="demo-note">Demo admin login — username <b>admin</b>, password <b>ashirvad@123</b></div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="appShell" class="d-none">
+
+  <div class="util-strip">
+    <div class="disclaimer" data-i18n="util.disclaimer">Independently operated by an Ashirvad-affiliated dealer. Not an official Ashirvad website.</div>
+    <div class="util-right">
+      <a class="tel-link" href="tel:9003482267">☎ 9003482267</a>
+      <button class="lang-toggle" id="langToggle">தமிழ்</button>
+    </div>
+  </div>
+
+  <header class="brand-header">
+    <div class="brand-row">
+      <div class="brand-id">
+        <div class="brand-mark" id="appBrandMark">
+          <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="20" cy="20" r="12" stroke="#e6c878" stroke-width="2"/>
+            <circle cx="20" cy="20" r="6" stroke="#e6c878" stroke-width="1.6"/>
+          </svg>
+        </div>
+        <div class="brand-word">
+          <div class="name">Ashirvad<span class="accent">Connect</span></div>
+          <div class="sub" data-i18n="util.tagline">Dealer B2B Ordering Portal</div>
+        </div>
+      </div>
+      <div class="brand-actions">
+        <button class="icon-btn" id="openWishlist" title="Wishlist">♡</button>
+        <button class="icon-btn" id="openBulkOrder" title="Bulk order">📤</button>
+        <button class="icon-btn" id="openOrders" title="Orders">🧾</button>
+        <button class="icon-btn" id="openCart" title="Cart">🛒<span class="cart-badge d-none" id="cartBadge">0</span></button>
+        <button class="icon-btn" id="openAccount" title="Account">👤</button>
+      </div>
+    </div>
+    <div class="search-wrap" id="searchWrap">
+      <span class="s-ic">⌕</span>
+      <input type="text" id="searchInput" data-i18n-ph="home.searchPlaceholder" placeholder="Search pipes, fittings, size, part no…">
+      <button class="s-clear" id="searchClear">✕</button>
+    </div>
+    <nav class="desk-nav">
+      <button data-view="home" class="active" data-i18n="nav.home">Home</button>
+      <button data-view="categories" data-i18n="nav.categories">Categories</button>
+      <button data-view="calculator" data-i18n="nav.calculator">Bore Calculator</button>
+      <button data-view="orders" data-i18n="nav.orders">Orders</button>
+      <button data-view="account" data-i18n="nav.account">Account</button>
+    </nav>
+  </header>
+
+  <main id="mainContent"></main>
+
+  <footer class="ac-footer" id="acFooter"></footer>
+
+  <div class="bottom-nav">
+    <button data-view="home" class="active">
+      <span class="bn-ic">🏠</span><span data-i18n="nav.home">Home</span>
+    </button>
+    <button data-view="categories">
+      <span class="bn-ic">🗂</span><span data-i18n="nav.categories">Categories</span>
+    </button>
+    <button id="bnCart">
+      <span class="bn-ic" style="position:relative;">🛒<span class="bn-badge d-none" id="bnCartBadge">0</span></span>
+      <span data-i18n="nav.cart">Cart</span>
+    </button>
+    <button data-view="calculator">
+      <span class="bn-ic">📐</span><span data-i18n="nav.calculatorShort">Calc</span>
+    </button>
+    <button data-view="orders">
+      <span class="bn-ic">🧾</span><span data-i18n="nav.orders">Orders</span>
+    </button>
+    <button data-view="account">
+      <span class="bn-ic">👤</span><span data-i18n="nav.account">Account</span>
+    </button>
+  </div>
+
+  <!-- Cart Offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="cartOffcanvas">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title display fw-bold" data-i18n="cart.title">Your Cart</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body d-flex flex-column">
+      <div id="cartItemsWrap" class="flex-grow-1" style="overflow-y:auto;"></div>
+      <div class="cart-summary" id="cartSummary"></div>
+    </div>
+  </div>
+
+  <!-- Account Offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="accountOffcanvas">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title display fw-bold" data-i18n="account.title">My Account</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="accountBody"></div>
+  </div>
+
+  <!-- Support Offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="supportOffcanvas">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title display fw-bold" data-i18n="account.support">Contact Support</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="supportOffcanvasBody"></div>
+  </div>
+
+  <!-- FAQ Offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="faqOffcanvas">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title display fw-bold" data-i18n="account.faq">FAQ &amp; Delivery Policy</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="faqOffcanvasBody"></div>
+  </div>
+
+  <input type="file" id="bulkOrderFile" accept=".csv,.xlsx,.xls" class="d-none">
+
+  <!-- Idle / auto-logout warning modal -->
+  <div class="modal fade" id="idleWarningModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border-radius:14px; overflow:hidden; border:1px solid var(--gold-500);">
+        <div class="modal-body text-center p-4">
+          <div style="font-size:32px;">⏳</div>
+          <h5 class="fw-bold mt-2" style="font-family:'Cormorant Garamond',serif;">Still there?</h5>
+          <p class="mb-3" style="font-size:13px; color:var(--ink-700);">
+            For your security, you'll be logged out in <b><span id="idleCountdown">60</span>s</b> due to inactivity.
+          </p>
+          <button type="button" class="btn-royal" id="idleStayBtn" style="width:100%;">Stay logged in</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Product detail modal -->
+  <div class="modal fade" id="productDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <div class="modal-content" style="border-radius:14px; overflow:hidden;">
+        <div class="modal-header border-bottom">
+          <h5 class="modal-title display fw-bold" id="pdTitle">Product</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="pdBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Catalog spec-group card detail modal (dynamic "New card" catalog) -->
+  <div class="modal fade" id="catalogCardModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" style="max-width:560px;">
+      <div class="modal-content" style="border-radius:14px; overflow:hidden;">
+        <div class="modal-header border-bottom">
+          <h5 class="modal-title display fw-bold" id="ccTitle">Card</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body" id="ccBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Business switcher modal -->
+  <div class="modal fade" id="businessSwitcherModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content" style="border-radius:14px; overflow:hidden;">
+        <div class="modal-header border-bottom">
+          <h5 class="modal-title display fw-bold">Choose a business</h5>
+        </div>
+        <div class="modal-body" id="businessSwitcherBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add business offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="addBusinessOffcanvas" style="width:min(440px,100vw);">
+    <div class="offcanvas-header border-bottom">
+      <h5 class="offcanvas-title display fw-bold">+ Add another business</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="addBusinessOffcanvasBody"></div>
+  </div>
+
+
+</div>
+
+<!-- ================= ADMIN SHELL ================= -->
+<div id="adminShell" class="d-none">
+  <div class="admin-header">
+    <div class="ah-row">
+      <div class="ah-brand">Ashirvad<span class="accent">Connect</span><span class="ah-badge">ADMIN</span></div>
+      <button class="ah-logout" id="adminLogoutBtn">Log out</button>
+    </div>
+    <div class="admin-tabs">
+      <button data-atab="dashboard" class="active">📊 Dashboard</button>
+      <button data-atab="orders">🧾 Orders</button>
+      <button data-atab="customers">🏢 Dealers</button>
+      <button data-atab="products">📦 Products &amp; Pricing</button>
+      <button data-atab="catalog">📇 Catalog</button>
+      <button data-atab="calc">📐 Calculator Rules</button>
+      <button data-atab="marketing">📣 Marketing</button>
+      <button data-atab="configuration">⚙️ Configuration</button>
+      <button data-atab="reports">📈 Reports</button>
+    </div>
+  </div>
+  <div id="adminMain"></div>
+</div>
+
+<!-- Admin: product details editor offcanvas (images/description/specs/bulk tiers + dealer pricing).
+   Lives at body level (next to the dealer offcanvas) — inside #appShell it was hidden whenever admin was active. -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="productDetailsOffcanvas" style="width:min(560px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="productDetailsOffcanvasTitle">Product Details</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="productDetailsOffcanvasBody"></div>
+</div>
+
+<!-- Dealer profile edit offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="dealerOffcanvas" style="width:min(480px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="dealerOffcanvasTitle">Dealer Profile</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="dealerOffcanvasBody"></div>
+</div>
+
+<!-- Banner edit offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="bannerOffcanvas" style="width:min(440px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="bannerOffcanvasTitle">Banner</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="bannerOffcanvasBody"></div>
+</div>
+
+<!-- Offer edit offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="offerOffcanvas" style="width:min(440px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="offerOffcanvasTitle">Offer</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="offerOffcanvasBody"></div>
+</div>
+
+<!-- Calculator rule edit offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="ruleOffcanvas" style="width:min(480px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="ruleOffcanvasTitle">Rule</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="ruleOffcanvasBody"></div>
+</div>
+
+<!-- Invoice settings offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="invoiceSettingsOffcanvas" style="width:min(440px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="invoiceSettingsOffcanvasTitle">Invoice Settings</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="invoiceSettingsOffcanvasBody"></div>
+</div>
+
+<!-- Delivery / home settings offcanvas -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="deliverySettingsOffcanvas" style="width:min(440px,100vw);">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title display fw-bold" id="deliverySettingsOffcanvasTitle">Home / Delivery Settings</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+  </div>
+  <div class="offcanvas-body" id="deliverySettingsOffcanvasBody"></div>
+</div>
+
+<div class="toast-container position-fixed top-0 start-50 translate-middle-x p-3" style="z-index:1080;">
+  <div id="mainToast" class="toast toast-royal" role="status">
+    <div class="d-flex">
+      <div class="toast-body" id="toastBody"></div>
+      <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+    </div>
+  </div>
+</div>
+<script src="js/vendor/bootstrap.bundle.min.js?v=1.2.0"></script>
+<script src="js/firebase-config.js?v=1.2.0"></script>
+<script src="js/cloud/firebase-boot.js?v=1.2.0"></script>
+</body>
+</html>

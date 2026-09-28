@@ -1,0 +1,8 @@
+{
+  "name": "ashirvadconnect-setup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-time setup and admin helper for the AshirvadConnect Firebase project",
+  "scripts": { "init": "node setup.js init", "check": "node setup.js check" },
+  "dependencies": { "firebase-admin": "^12.0.0" }
+}
