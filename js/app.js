@@ -184,190 +184,13 @@ var STRINGS = {
     "toast.addressAdded":"Address saved",
     "toast.addressRemoved":"Address removed",
     "toast.calcAdded":"Equipment list added to cart"
-  },
-  ta: {
-    "auth.tagline":"டீலர் B2B ஆர்டர் போர்ட்டல்",
-    "auth.login":"உள்நுழைய",
-    "auth.register":"பதிவு செய்க",
-    "auth.gst":"GST எண்",
-    "auth.loginPhone":"தொலைபேசி எண்",
-    "auth.password":"கடவுச்சொல்",
-    "auth.confirmPassword":"கடவுச்சொல்லை உறுதிப்படுத்தவும்",
-    "auth.loginBtn":"உள்நுழைய",
-    "auth.noAccount":"புதிய டீலர் கணக்கா?",
-    "auth.haveAccount":"ஏற்கனவே பதிவு செய்துள்ளீர்களா?",
-    "auth.businessName":"வணிகத்தின் பெயர்",
-    "auth.phone":"தொலைபேசி எண்",
-    "auth.address":"வணிக முகவரி",
-    "auth.registerBtn":"கணக்கை உருவாக்கு",
-    "auth.demoNote":"டெமோ முறை — கணக்குகள் இந்த சாதனத்தில் மட்டுமே சேமிக்கப்படுகின்றன.",
-    "auth.err.gstRequired":"உங்கள் GST எண்ணை உள்ளிடவும்.",
-    "auth.err.notFound":"இந்த GST எண்ணுக்கு கணக்கு இல்லை.",
-    "auth.err.wrongPassword":"கடவுச்சொல் தவறு.",
-    "auth.err.fillAll":"அனைத்து விவரங்களையும் நிரப்பவும்.",
-    "auth.err.gstExists":"இந்த GST எண்ணுடன் ஏற்கனவே ஒரு கணக்கு உள்ளது.",
-    "auth.err.passwordMismatch":"கடவுச்சொற்கள் பொருந்தவில்லை.",
-    "auth.err.phoneInvalid":"சரியான 10 இலக்க தொலைபேசி எண்ணை உள்ளிடவும்.",
-    "util.disclaimer":"Ashirvad துணை டீலர் ஒருவரால் சுயாதீனமாக இயக்கப்படுகிறது. இது அதிகாரப்பூர்வ Ashirvad வலைத்தளம் அல்ல.",
-    "util.tagline":"டீலர் B2B ஆர்டர் போர்ட்டல்",
-    "nav.home":"முகப்பு",
-    "nav.categories":"வகைகள்",
-    "nav.cart":"கார்ட்",
-    "nav.calculator":"போர் கால்குலேட்டர்",
-    "nav.calculatorShort":"கால்க்",
-    "nav.orders":"ஆர்டர்கள்",
-    "nav.account":"கணக்கு",
-    "home.searchPlaceholder":"பைப், ஃபிட்டிங், சைஸ், பார்ட் நம்பர் தேடுங்கள்…",
-    "home.welcome":"மீண்டும் வரவேற்கிறோம்",
-    "home.shopByCategory":"வகை வாரியாக பார்க்க",
-    "home.allProducts":"அனைத்து பொருட்கள்",
-    "home.recentlyViewed":"சமீபத்தில் பார்த்தவை",
-    "home.searchResults":"தேடல் முடிவுகள்",
-    "home.noResults":"உங்கள் தேடலுக்கு பொருந்தும் பொருட்கள் இல்லை",
-    "home.tryDifferent":"வேறு சைஸ், பெயர் அல்லது வகையை முயற்சிக்கவும்.",
-    "home.loadMore":"மேலும் {n} காட்டு",
-    "home.newArrivals":"புதிய வரவுகள்",
-    "sort.default":"வரிசை: இயல்பு",
-    "sort.nameAsc":"பெயர் (A-Z)",
-    "sort.priceAsc":"விலை: குறைந்தது முதல் அதிகம்",
-    "sort.priceDesc":"விலை: அதிகம் முதல் குறைந்தது",
-    "sort.hideOos":"ஸ்டாக் இல்லாதவை மறை",
-    "cat.agri":"அக்ரி பைப்கள்",
-    "cat.casing":"கேசிங் பைப்கள்",
-    "cat.column":"கால்ம் பைப்கள்",
-    "cat.all":"அனைத்தும்",
-    "catalog.allSubs":"அனைத்தும்",
-    "catalog.noCards":"இங்கு இன்னும் பொருட்கள் வெளியிடப்படவில்லை.",
-    "catalog.options":"விருப்பங்கள்",
-    "catalog.from":"தொடக்கம்",
-    "catalog.viewSizes":"அளவுகளை காண",
-    "catalog.allOptions":"அனைத்தும்",
-    "catalog.photos":"படங்கள்",
-    "catalog.sizes":"அளவுகள்",
-    "catalog.allPrefix":"அனைத்தும்",
-    "catalog.searchPlaceholder":"அளவு அல்லது பொருள் குறியீட்டைத் தேடுங்கள்…",
-    "catalog.itemCode":"பொருள் குறியீடு:",
-    "catalog.priceLabel":"விலை",
-    "catalog.gstLabel":"GST",
-    "catalog.noOptions":"அந்த சேர்க்கைக்கு பொருட்கள் இல்லை.",
-    "product.mrp":"MRP",
-    "product.inclGst":"GST உட்பட",
-    "product.add":"சேர்",
-    "product.off":"தள்ளுபடி",
-    "product.outOfStock":"கையிருப்பில் இல்லை",
-    "product.lowStock":"{n} மட்டுமே உள்ளது",
-    "product.notifyMe":"அறிவிக்கவும்",
-    "product.notified":"அறிவிப்போம்",
-    "toast.notifyRequested":"இது கையிருப்பில் வந்தவுடன் உங்களுக்கு அறிவிப்போம்.",
-    "toast.backInStock":"🎉 மீண்டும் கையிருப்பில்:",
-    "bulk.title":"மொத்த ஆர்டர்",
-    "bulk.done":"மொத்த ஆர்டர் கோப்பு செயல்படுத்தப்பட்டது",
-    "cart.title":"உங்கள் கார்ட்",
-    "cart.empty.title":"உங்கள் கார்ட் காலியாக உள்ளது",
-    "cart.empty.sub":"ஆர்டர் செய்ய பொருட்களை சேர்க்கவும்.",
-    "cart.continueShopping":"தொடர்ந்து வாங்குக",
-    "cart.subtotal":"துணை மொத்தம்",
-    "cart.gst":"GST (சேர்க்கப்பட்டது)",
-    "cart.total":"மொத்த தொகை",
-    "cart.placeOrder":"ஆர்டர் செய்யவும்",
-    "cart.accountBlocked":"உங்கள் கணக்கு தற்போது செயலில் இல்லை, எனவே ஆர்டர் செய்ய முடியாது. தயவுசெய்து ஆதரவைத் தொடர்பு கொள்ளவும்.",
-    "cart.remove":"நீக்கு",
-    "orders.title":"ஆர்டர் வரலாறு",
-    "orders.searchPlaceholder":"ஆர்டர் ஐடி, பொருள் பெயர் தேடவும்...",
-    "orders.filter.all":"அனைத்தும்",
-    "orders.clearFilters":"அழி",
-    "orders.noMatch.title":"பொருந்தும் ஆர்டர்கள் இல்லை",
-    "orders.noMatch.sub":"வேறு தேடல் அல்லது வடிகட்டியை முயற்சிக்கவும்.",
-    "orders.empty.title":"இதுவரை ஆர்டர்கள் இல்லை",
-    "orders.empty.sub":"நீங்கள் செய்யும் ஆர்டர்கள் இங்கே தோன்றும்.",
-    "orders.orderNo":"ஆர்டர்",
-    "orders.items":"பொருட்கள்",
-    "orders.total":"மொத்தம்",
-    "orders.status.placed":"வைக்கப்பட்டது",
-    "orders.status.confirmed":"உறுதி செய்யப்பட்டது",
-    "orders.status.dispatched":"அனுப்பப்பட்டது",
-    "orders.status.delivered":"டெலிவரி ஆனது",
-    "orders.status.cancelled":"ரத்து செய்யப்பட்டது",
-    "orders.discount.flat":"சிறப்பு தள்ளுபடி",
-    "orders.discount.pct":"சிறப்பு தள்ளுபடி",
-    "orders.discount.reason":"காரணம்",
-    "orders.subtotal":"ஆர்டர் மதிப்பு",
-    "orders.payable":"செலுத்த வேண்டிய தொகை",
-    "orders.invoice":"விலைப்பட்டியல்",
-    "account.creditLimit":"கடன் வரம்பு",
-    "account.outstanding":"நிலுவைத் தொகை",
-    "orders.newDiscount":"🎁 இந்த ஆர்டருக்கு சிறப்பு தள்ளுபடி வழங்கப்பட்டது!",
-    "toast.newDiscount":"உங்கள் ஆர்டரில் புதிய தள்ளுபடி உள்ளது!",
-    "offer.title":"சலுகை மண்டலம்",
-    "account.title":"என் கணக்கு",
-    "account.business":"வணிகத்தின் பெயர்",
-    "account.gst":"GST எண்",
-    "account.phone":"தொலைபேசி",
-    "account.address":"முகவரி",
-    "account.logout":"வெளியேறு",
-    "account.addresses":"சேமித்த டெலிவரி முகவரிகள்",
-    "account.myBusinesses":"எனது வணிகங்கள்",
-    "account.current":"தற்போதைய",
-    "account.switchTo":"மாற்று",
-    "account.addBusiness":"+ மற்றொரு வணிகத்தைச் சேர்க்க",
-    "account.allBusinessOrders":"அனைத்து வணிகங்களின் ஆர்டர்களைக் காண்க",
-    "account.addAddress":"+ முகவரி சேர்க்க",
-    "account.makePrimary":"முதன்மையாக்கு",
-    "account.remove":"நீக்கு",
-    "account.wishlist":"எனது விருப்பப் பட்டியல்",
-    "account.announcements":"அறிவிப்புகள்",
-    "account.noAnnouncements":"இதுவரை அறிவிப்புகள் இல்லை.",
-    "account.support":"ஆதரவைத் தொடர்பு கொள்ளவும்",
-    "account.faq":"FAQ & டெலிவரி கொள்கை",
-    "account.priceList":"எனது விலைப் பட்டியலைப் பதிவிறக்கவும்",
-    "wishlist.title":"எனது விருப்பப் பட்டியல்",
-    "wishlist.empty.title":"உங்கள் விருப்பப் பட்டியல் காலியாக உள்ளது",
-    "wishlist.empty.sub":"எந்த பொருளிலும் ♡ ஐ தட்டி இங்கே சேமிக்கவும்.",
-    "cart.deliverTo":"டெலிவரி முகவரி",
-    "cart.freeDeliveryUnlocked":"🎉 இலவச டெலிவரி திறக்கப்பட்டது!",
-    "cart.addMoreForFree":"இலவச டெலிவரிக்கு இன்னும் {n} சேர்க்கவும்",
-    "cart.deliveryCharge":"டெலிவரி கட்டணம்",
-    "calc.title":"போர் / கேசிங் தேவை கால்குலேட்டர்",
-    "calc.intro":"உங்கள் போர் ஆழம் மற்றும் நோக்கத்தைச் சொல்லுங்கள் — தேவையான பைப்கள் மற்றும் ஃபிட்டிங்குகளைக் கணக்கிடுகிறோம்.",
-    "calc.purposeType":"பயன்பாடு / நோக்கம்",
-    "calc.selectPurpose":"நோக்கத்தைத் தேர்ந்தெடுக்கவும்…",
-    "calc.depth":"போர் ஆழம்",
-    "calc.unitFt":"அடி",
-    "calc.unitM":"மீ",
-    "calc.diameter":"போர் விட்டம் (அங்குலம், விருப்பத்தேர்வு)",
-    "calc.calculate":"கணக்கிடு",
-    "calc.noMatch.title":"பொருந்தும் அமைப்பு கிடைக்கவில்லை",
-    "calc.noMatch.sub":"இதற்கு துல்லியமாக பொருத்த முடியவில்லை — எங்களைத் தொடர்பு கொள்ளுங்கள், சரியான பட்டியலை உருவாக்க உதவுவோம்.",
-    "calc.contactUs":"தொடர்பு கொள்ளவும்",
-    "calc.resultsTitle":"பரிந்துரைக்கப்படும் உபகரணங்கள்",
-    "calc.addAllToCart":"அனைத்தையும் கார்ட்டில் சேர்",
-    "calc.grandTotal":"மதிப்பிடப்பட்ட மொத்தம்",
-    "calc.qty":"அளவு",
-    "calc.noRules":"கால்குலேட்டர் இன்னும் அமைக்கப்படவில்லை — விரைவில் பாருங்கள் அல்லது எங்களைத் தொடர்பு கொள்ளுங்கள்.",
-    "orders.cancel":"ஆர்டரை ரத்து செய்",
-    "orders.reorder":"மீண்டும் ஆர்டர்",
-    "orders.reorderAdded":"கூடையில் சேர்க்கப்பட்டது",
-    "orders.reorderSkipped":"கிடைக்கவில்லை, தவிர்க்கப்பட்டது",
-    "orders.share":"பகிர்",
-    "toast.added":"கார்ட்டில் சேர்க்கப்பட்டது",
-    "toast.removed":"கார்ட்டில் இருந்து நீக்கப்பட்டது",
-    "toast.orderPlaced":"ஆர்டர் வெற்றிகரமாக வைக்கப்பட்டது",
-    "toast.loggedIn":"வெற்றிகரமாக உள்நுழைந்தீர்கள்",
-    "toast.registered":"கணக்கு உருவாக்கப்பட்டது — நீங்கள் உள்நுழைந்துள்ளீர்கள்",
-    "toast.loggedOut":"வெளியேறியது",
-    "toast.wishAdded":"விருப்பப்பட்டியலில் சேர்க்கப்பட்டது",
-    "toast.wishRemoved":"விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது",
-    "toast.orderCancelled":"ஆர்டர் ரத்து செய்யப்பட்டது",
-    "toast.addressAdded":"முகவரி சேமிக்கப்பட்டது",
-    "toast.addressRemoved":"முகவரி நீக்கப்பட்டது",
-    "toast.calcAdded":"உபகரண பட்டியல் கார்ட்டில் சேர்க்கப்பட்டது"
   }
 };
 
-var lang = localStorage.getItem('ac_lang') || 'en';
-
+// Tamil UI translation and the language toggle were removed (English only now); STRINGS keeps
+// its {en:{...}} shape and t() its same signature so no call site anywhere else had to change.
 function t(key){
-  return (STRINGS[lang] && STRINGS[lang][key]) || STRINGS.en[key] || key;
+  return STRINGS.en[key] || key;
 }
 
 function applyBranding(){
@@ -412,15 +235,13 @@ function renderAppFooter(){
     '</div>';
 }
 function applyI18n(){
-  document.documentElement.lang = lang === 'ta' ? 'ta' : 'en';
-  document.body.classList.toggle('lang-ta', lang === 'ta');
+  document.documentElement.lang = 'en';
   document.querySelectorAll('[data-i18n]').forEach(function(el){
     el.textContent = t(el.getAttribute('data-i18n'));
   });
   document.querySelectorAll('[data-i18n-ph]').forEach(function(el){
     el.setAttribute('placeholder', t(el.getAttribute('data-i18n-ph')));
   });
-  document.getElementById('langToggle').textContent = lang === 'ta' ? 'English' : 'தமிழ்';
 }
 
 /* ================= Category icons (inline SVG, per category) ================= */
@@ -544,10 +365,15 @@ var SPEC_VARIANT_ID_BASE = 900000;
 function specVariantProductId(groupId, variantId){ return SPEC_VARIANT_ID_BASE + (Number(groupId)*10000) + Number(variantId); }
 function syncSpecVariantProducts(){
   PRODUCTS = PRODUCTS.filter(function(p){ return !p.isCatalogVariant; });
+  // Defensive: a card missing `fields` or a variant missing `values` (corrupted data, an old
+  // import, manual localStorage editing) used to throw here and crash the WHOLE app on load —
+  // every screen, not just the catalog — because this runs once at startup with nothing to
+  // catch it. One bad card must never be able to do that; skip what's missing instead.
   SPEC_GROUPS.forEach(function(g){
-    var headlineField = g.fields[0];
+    var headlineField = (g.fields || [])[0];
     (g.variants||[]).forEach(function(v){
-      var headline = headlineField ? (v.values[headlineField.id] || g.title) : g.title;
+      var vals = v.values || {};
+      var headline = headlineField ? (vals[headlineField.id] || g.title) : g.title;
       // Migrated (ex-flat-catalog) variants carry v.pid = their ORIGINAL product id, so cart lines,
       // orders, dealer price overrides, stock-notify requests and calculator rules keep resolving.
       var hasPid = v.pid !== undefined && v.pid !== null && v.pid !== '';
@@ -1246,7 +1072,22 @@ function toggleWishlist(id){
   if(idx === -1){ list.push(id); showToast(t('toast.wishAdded')); } else { list.splice(idx,1); showToast(t('toast.wishRemoved')); }
   saveWishlist(list);
   renderProductGrids();
+  // renderProductGrids() only refreshes .product-grid (regular products, numeric ids) — a
+  // catalog/"New card" item uses a string key ('sg'+id) and lives in .uc-grid instead, so its
+  // heart never got the memo: the wishlist WAS saved correctly, the button just kept showing
+  // the old ♡ until the customer left the screen and came back. Refresh those hearts too.
+  refreshCatalogCardWishButtons();
   if(currentView === 'wishlist') render();
+}
+function refreshCatalogCardWishButtons(){
+  document.querySelectorAll('.uc-grid .product-card[data-sg-id]').forEach(function(cardEl){
+    var g = SPEC_GROUPS.find(function(x){ return String(x.id) === cardEl.getAttribute('data-sg-id'); });
+    var btn = cardEl.querySelector('.wish-btn');
+    if(!g || !btn) return;
+    var wished = isWishlisted(specGroupWishKey(g));
+    btn.classList.toggle('active', wished);
+    btn.textContent = wished ? '♥' : '♡';
+  });
 }
 
 /* ---- Multiple saved delivery addresses ---- */
@@ -1293,8 +1134,8 @@ function loadBroadcasts(){
 }
 function saveBroadcasts(list){ localStorage.setItem('ac_broadcasts', JSON.stringify(list)); BROADCASTS = list; }
 var BROADCASTS = loadBroadcasts();
-function sendBroadcast(en, ta){
-  BROADCASTS.push({ id:(BROADCASTS.reduce(function(m,b){return Math.max(m,b.id);},0)+1), en:en, ta:ta, ts:Date.now(),
+function sendBroadcast(en){
+  BROADCASTS.push({ id:(BROADCASTS.reduce(function(m,b){return Math.max(m,b.id);},0)+1), en:en, ts:Date.now(),
     date:new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) });
   saveBroadcasts(BROADCASTS);
 }
@@ -1306,8 +1147,7 @@ function checkBroadcastNotifications(){
   var lastSeen = Number(u.lastSeenBroadcastId) || 0;
   var latest = BROADCASTS[BROADCASTS.length-1];
   if(latest.id > lastSeen){
-    var msg = (lang === 'ta' && latest.ta) ? latest.ta : latest.en;
-    showToast('📢 ' + msg);
+    showToast('📢 ' + latest.en);
     updateDealerProfile(session, { lastSeenBroadcastId: latest.id });
   }
 }
@@ -1730,14 +1570,6 @@ function logout(reason){
   clearIdleTimers();
 }
 
-/* ================= Language toggle ================= */
-document.getElementById('langToggle').addEventListener('click', function(){
-  lang = lang === 'ta' ? 'en' : 'ta';
-  localStorage.setItem('ac_lang', lang);
-  applyI18n();
-  render();
-});
-
 /* ================= Navigation ================= */
 function setView(view, cat){
   currentView = view;
@@ -2061,7 +1893,7 @@ function openCatalogCardModal(g){
 }
 
 function specGroupBodyHtml(g){
-  var filterFields = g.fields.filter(function(f){ return f.isFilter; });
+  var filterFields = (g.fields||[]).filter(function(f){ return f.isFilter; });
   var filtersHtml = filterFields.length ? (
     '<div class="sg-filters">' +
       filterFields.map(function(f){
@@ -2079,7 +1911,7 @@ function specGroupBodyHtml(g){
 }
 function uniqueSpecFieldValues(g, fieldId){
   var set = {};
-  g.variants.forEach(function(v){ var val = v.values[fieldId]; if(val) set[val] = true; });
+  (g.variants||[]).forEach(function(v){ var val = (v.values||{})[fieldId]; if(val) set[val] = true; });
   return Object.keys(set);
 }
 function wireSpecGroupBody(body, g){
@@ -2097,13 +1929,15 @@ function renderSpecGroupRows(g, body){
   body.querySelectorAll('[data-sg-filter]').forEach(function(sel){
     if(sel.value) activeFilters[sel.getAttribute('data-sg-filter')] = sel.value;
   });
-  var headlineField = g.fields[0];
-  var secondaryFields = g.fields.slice(1);
+  var fields = g.fields || [];
+  var headlineField = fields[0];
+  var secondaryFields = fields.slice(1);
 
-  var visible = g.variants.filter(function(v){
-    for(var fid in activeFilters){ if(v.values[fid] !== activeFilters[fid]) return false; }
+  var visible = (g.variants||[]).filter(function(v){
+    var vals = v.values || {};
+    for(var fid in activeFilters){ if(vals[fid] !== activeFilters[fid]) return false; }
     if(searchTerm){
-      var hay = (g.fields.map(function(f){ return v.values[f.id]||''; }).join(' ') + ' ' + (v.part||'') + ' SG'+g.id+'-V'+v.id).toLowerCase();
+      var hay = (fields.map(function(f){ return vals[f.id]||''; }).join(' ') + ' ' + (v.part||'') + ' SG'+g.id+'-V'+v.id).toLowerCase();
       if(hay.indexOf(searchTerm) === -1) return false;
     }
     return true;
@@ -2115,11 +1949,12 @@ function renderSpecGroupRows(g, body){
   }
 
   rowsWrap.innerHTML = visible.map(function(v){
-    var headline = headlineField ? (v.values[headlineField.id] || '—') : g.title;
+    var vals = v.values || {};
+    var headline = headlineField ? (vals[headlineField.id] || '—') : g.title;
     // Show each spec as "Label: Value" so it's clear which field is which — plain values
     // with no label (e.g. "6 inch · A") were unreadable once a card had more than one field.
     var secondaryParts = secondaryFields.map(function(f){
-      return v.values[f.id] ? '<span class="sg-row-spec"><b>'+esc(f.label||'—')+':</b> '+esc(v.values[f.id])+'</span>' : '';
+      return vals[f.id] ? '<span class="sg-row-spec"><b>'+esc(f.label||'—')+':</b> '+esc(vals[f.id])+'</span>' : '';
     }).filter(Boolean);
     var itemCode = v.part ? esc(v.part) : 'SG'+g.id+'-V'+v.id;
     var pid = (v.pid !== undefined && v.pid !== null && v.pid !== '') ? Number(v.pid) : specVariantProductId(g.id, v.id);
@@ -3218,8 +3053,7 @@ function accountBodyHtml(){
       '<div class="ac-title" style="font-weight:700; margin-bottom:8px;">📢 '+t('account.announcements')+'</div>' +
       (recentBroadcasts.length === 0 ? '<div class="ac-sub">'+t('account.noAnnouncements')+'</div>' :
         recentBroadcasts.map(function(b){
-          var msg = (lang === 'ta' && b.ta) ? b.ta : b.en;
-          return '<div class="oi-line" style="display:block;"><div style="font-size:10px; color:var(--ink-600);">'+esc(b.date)+'</div><div>'+esc(msg)+'</div></div>';
+          return '<div class="oi-line" style="display:block;"><div style="font-size:10px; color:var(--ink-600);">'+esc(b.date)+'</div><div>'+esc(b.en)+'</div></div>';
         }).join('')
       ) +
     '</div>';
@@ -3817,7 +3651,14 @@ function syncEquipmentFromDom(){
 }
 
 /* ---------------- Orders tab ---------------- */
-var ORDER_UI = { range:'all', from:'', to:'', sort:'newest', page:1, pageSize:20, expanded:{}, selected:{} };
+/* editOpen / discountOpen: whether an order's "Edit items" / "Bonus discount" panel is open.
+   Previously this lived ONLY as a CSS class toggled by a click handler — so the instant
+   "+ Add item" or "Save item changes" ran renderAdminOrders() (to show the updated items),
+   the panel's freshly-rendered HTML came back with the class gone, and the whole panel
+   silently closed. The item HAD been saved correctly; the admin just watched their own
+   editor vanish and had no way to tell whether anything had happened. Tracking it as real
+   state here means it survives every re-render, exactly like ORDER_UI.expanded already does. */
+var ORDER_UI = { range:'all', from:'', to:'', sort:'newest', page:1, pageSize:20, expanded:{}, selected:{}, editOpen:{}, discountOpen:{} };
 var ORDER_AUTO_RULES_VIEW = false;
 function orderRangeBounds(){
   var now = new Date(), day = 86400000;
@@ -3925,7 +3766,11 @@ function orderDetailHtml(o){
   var payable = orderPayable(o);
   var canCancel = o.status !== 'delivered' && o.status !== 'cancelled';
   var canEditItems = (o.status === 'placed' || o.status === 'confirmed');
-  var activeProds = canEditItems ? PRODUCTS.filter(function(p){ return p.active !== false; }) : [];
+  // Same "active !== false excludes catalog cards" issue fixed elsewhere (Pricing Overview,
+  // the dealer price-list export): a catalog-card variant's `active` flag means "migrated from
+  // the old flat catalog", not "enabled", so it was silently missing from this dropdown —
+  // only the handful of plain (non-catalog) products ever showed up here.
+  var activeProds = canEditItems ? PRODUCTS.filter(function(p){ return p.isCatalogVariant || p.active !== false; }) : [];
   return '<div class="ord-detail">' +
     '<div class="ac-sub mb-2">'+esc(o.dealerBusiness||o.dealerGst)+' · '+esc(o.dealerGst)+' · '+esc(o.date)+(o.deliveryAddress ? ' · 📍 '+esc(o.deliveryAddress) : '')+'</div>' +
     '<div class="admin-order-items" id="items-'+esc(o.id)+'" style="margin-top:0; border-top:none; padding-top:0;">' +
@@ -3945,7 +3790,7 @@ function orderDetailHtml(o){
     '</div>' +
     autoStatusRowHtml(o) +
     (canEditItems ? (
-      '<div class="discount-form" id="ef-'+esc(o.id)+'">' +
+      '<div class="discount-form'+(ORDER_UI.editOpen[o.id]?' show':'')+'" id="ef-'+esc(o.id)+'">' +
         o.items.map(function(it, idx){
           return '<div class="df-row" style="align-items:center;">' +
             '<span style="flex:1; font-size:12px;">'+esc(it.name)+' <span style="color:var(--ink-600);">('+money(it.price)+' ea)</span></span>' +
@@ -3963,7 +3808,7 @@ function orderDetailHtml(o){
         '<div class="ac-sub mt-1">Setting an item\'s quantity to 0 removes it. Prices are locked at the price shown; only quantities / item list change.</div>' +
       '</div>'
     ) : '') +
-    '<div class="discount-form" id="df-'+esc(o.id)+'">' +
+    '<div class="discount-form'+(ORDER_UI.discountOpen[o.id]?' show':'')+'" id="df-'+esc(o.id)+'">' +
       '<div class="df-row">' +
         '<select id="dtype-'+esc(o.id)+'"><option value="pct">% off</option><option value="flat">₹ flat off</option></select>' +
         '<input type="number" id="dval-'+esc(o.id)+'" placeholder="Value" style="width:90px;">' +
@@ -4346,8 +4191,8 @@ function wireAdminOrders(){
   adminMain.querySelectorAll('[data-discount-toggle]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var id = btn.getAttribute('data-discount-toggle');
-      var form = document.getElementById('df-'+id);
-      form.classList.toggle('show');
+      ORDER_UI.discountOpen[id] = !ORDER_UI.discountOpen[id];
+      renderAdminOrders();
     });
   });
   adminMain.querySelectorAll('[data-apply-discount]').forEach(function(btn){
@@ -4389,8 +4234,8 @@ function wireAdminOrders(){
   adminMain.querySelectorAll('[data-edit-toggle]').forEach(function(btn){
     btn.addEventListener('click', function(){
       var id = btn.getAttribute('data-edit-toggle');
-      var form = document.getElementById('ef-'+id);
-      if(form) form.classList.toggle('show');
+      ORDER_UI.editOpen[id] = !ORDER_UI.editOpen[id];
+      renderAdminOrders();
     });
   });
   adminMain.querySelectorAll('[data-add-item]').forEach(function(btn){
@@ -5261,6 +5106,12 @@ function renderSpecGroupBuilder(){
         '<button class="btn-admin sm" id="btnAddField">+ Add field</button>' +
       '</div>' +
       '<div class="ac-sub mb-2">Price (MRP) and GST % are permanent and always shown separately — build your own fields for everything else (e.g. Size, Material, Length).</div>' +
+      (recentFieldLabels().length ? (
+        '<div class="ac-sub" style="margin-bottom:4px;">Recently used elsewhere — tap to add:</div>' +
+        '<div id="recentFieldChips" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">' +
+          recentFieldLabels().map(function(lbl){ return '<button type="button" class="filter-chip recent-field-chip" data-recent-field="'+esc(lbl)+'">+ '+esc(lbl)+'</button>'; }).join('') +
+        '</div>'
+      ) : '') +
       '<div id="fieldBuilderList"></div>' +
     '</div>' +
 
@@ -5281,6 +5132,8 @@ function renderSpecGroupBuilder(){
         '<input type="text" id="variantFilter" placeholder="🔍 Filter items in this card…" style="flex:1; border:1.3px solid #ddd3ba; border-radius:7px; padding:6px 10px; font-size:12px;">' +
         '<span class="ac-sub" id="variantCountLabel"></span>' +
       '</div>' +
+      '<div class="ac-sub" style="margin-bottom:4px;">Column order (use ↑ / ↓ to rearrange):</div>' +
+      '<div id="staticColOrderList" style="margin-bottom:10px;"></div>' +
       '<div style="overflow-x:auto; max-height:65vh; overflow-y:auto;"><table class="dealer-table" id="variantTable">' +
         '<thead><tr id="variantTableHeadRow"></tr></thead>' +
         '<tbody id="variantTableBody"></tbody>' +
@@ -5293,14 +5146,31 @@ function renderSpecGroupBuilder(){
   renderCategoryPicker();
   renderSubcategoryPicker();
   renderFieldBuilderList();
+  renderColumnOrderList();
   renderVariantTable();
 
   document.getElementById('btnBackToProducts').addEventListener('click', exitSpecBuilder);
   document.getElementById('btnAddField').addEventListener('click', function(){
     var st = ensureSpecBuilderState();
-    st.fields.push({ id: nextSpecFieldId(st), label:'', isFilter:false });
+    var f = { id: nextSpecFieldId(st), label:'', isFilter:false };
+    st.fields.push(f);
     renderFieldBuilderList();
     renderVariantTable();
+    focusNewFieldRow(f.id);
+  });
+  document.querySelectorAll('.recent-field-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      var st = ensureSpecBuilderState();
+      var label = chip.getAttribute('data-recent-field');
+      if(st.fields.some(function(f){ return (f.label||'').trim().toLowerCase() === label.toLowerCase(); })){
+        showToast('That field is already on this card'); return;
+      }
+      var f = { id: nextSpecFieldId(st), label:label, isFilter:false };
+      st.fields.push(f);
+      renderFieldBuilderList();
+      renderVariantTable();
+      focusNewFieldRow(f.id);
+    });
   });
   document.getElementById('btnAddVariant').addEventListener('click', function(){
     var st = ensureSpecBuilderState();
@@ -5445,6 +5315,30 @@ function showInlineAddSubcategory(){
 }
 
 /* ---- Field builder ---- */
+/* Field labels already used on other cards, most-recently-created card first, deduped —
+   shown as quick-pick chips so admin can reuse "Size" / "Material" / etc. instead of
+   retyping the same labels on every new card (and so spellings stay consistent). */
+function recentFieldLabels(){
+  var seen = {}, out = [];
+  SPEC_GROUPS.slice().sort(function(a,b){ return b.id - a.id; }).forEach(function(g){
+    (g.fields||[]).forEach(function(f){
+      var label = (f.label||'').trim();
+      var key = label.toLowerCase();
+      if(label && !seen[key]){ seen[key] = true; out.push(label); }
+    });
+  });
+  return out.slice(0, 10);
+}
+/* A freshly added field (blank "+ Add field", or a recent-label chip) is easy to miss if the
+   card already has several fields — scroll it into view and put the cursor straight into its
+   label box instead of leaving admin to hunt for a blank row that just appeared. */
+function focusNewFieldRow(fieldId){
+  var row = document.querySelector('[data-field-row="'+fieldId+'"]');
+  if(!row) return;
+  row.scrollIntoView({ block:'center', behavior:'smooth' });
+  var input = row.querySelector('.sf-label');
+  if(input) input.focus();
+}
 function renderFieldBuilderList(){
   var wrap = document.getElementById('fieldBuilderList');
   if(!wrap) return;
@@ -5513,6 +5407,60 @@ function renderFieldBuilderList(){
   });
 }
 
+/* ---- Static column order (Item code / Price / Disc % / GST % / Stock) ----
+   These five columns always existed in this fixed order with no way to change it. Reordering
+   here only changes what order they're DRAWN in — every input keeps the same class name
+   (.sv-mrp, .sv-disc, …) it always had, so none of the read/save wiring further down needs to
+   know or care which position a column is currently drawn in. */
+var STATIC_VARIANT_COLS = {
+  part: { label:'Item code', th:'<th>Item code</th>',
+    td:function(v){ return '<td><input type="text" class="sv-part" data-variant-id="'+v.id+'" value="'+esc(v.part||'')+'" placeholder="optional" style="width:110px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>'; } },
+  mrp: { label:'Price (MRP) ₹', th:'<th>Price (MRP) ₹</th>',
+    td:function(v){ return '<td><input type="number" class="sv-mrp" data-variant-id="'+v.id+'" value="'+(v.mrp||0)+'" style="width:90px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>'; } },
+  discountPct: { label:'Disc %', th:'<th>Disc %</th>',
+    td:function(v){ return '<td><input type="number" class="sv-disc" data-variant-id="'+v.id+'" value="'+(v.discountPct||0)+'" step="0.01" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>'; } },
+  gstPct: { label:'GST %', th:'<th>GST %</th>',
+    td:function(v){ return '<td><input type="number" class="sv-gst" data-variant-id="'+v.id+'" value="'+(v.gstPct!==undefined?v.gstPct:18)+'" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>'; } },
+  stock: { label:'Stock', th:'<th>Stock <span style="font-weight:400;">(blank = unlimited)</span></th>',
+    td:function(v){ return '<td><input type="number" class="sv-stock" data-variant-id="'+v.id+'" min="0" value="'+((v.stock===undefined||v.stock===null||v.stock==='')?'':v.stock)+'" placeholder="∞" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>'; } }
+};
+function staticColOrder(state){
+  var def = ['part','mrp','discountPct','gstPct','stock'];
+  if(!state.staticColOrder) state.staticColOrder = def.slice();
+  var have = state.staticColOrder.filter(function(k){ return STATIC_VARIANT_COLS[k]; });   // drop any stale/unknown key
+  def.forEach(function(k){ if(have.indexOf(k) === -1) have.push(k); });                     // add any new key old saved cards predate
+  state.staticColOrder = have;
+  return have;
+}
+function renderColumnOrderList(){
+  var wrap = document.getElementById('staticColOrderList');
+  if(!wrap) return;
+  var state = ensureSpecBuilderState();
+  var order = staticColOrder(state);
+  // Same button classes the field-order ↑/↓ buttons above already use (.btn-admin.sm.outline) —
+  // the earlier plain-text buttons sat on a dark badge with no border/background of their own,
+  // so the arrows were the same gold-on-navy as the label and were essentially invisible.
+  wrap.innerHTML = order.map(function(key, idx){
+    return '<span style="display:inline-flex; align-items:center; gap:4px; margin:0 6px 6px 0; padding:3px 8px; border-radius:8px; background:var(--ivory-100);">' +
+      '<b style="font-size:11.5px;">'+esc(STATIC_VARIANT_COLS[key].label)+'</b>' +
+      '<button type="button" class="btn-admin sm outline sc-up" data-static-col="'+key+'"'+(idx===0?' disabled':'')+' style="padding:2px 7px;">↑</button>' +
+      '<button type="button" class="btn-admin sm outline sc-down" data-static-col="'+key+'"'+(idx===order.length-1?' disabled':'')+' style="padding:2px 7px;">↓</button>' +
+    '</span>';
+  }).join('');
+  wrap.querySelectorAll('.sc-up').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var key = btn.getAttribute('data-static-col'), idx = order.indexOf(key);
+      if(idx > 0){ var tmp = order[idx-1]; order[idx-1] = order[idx]; order[idx] = tmp; state.staticColOrder = order; renderColumnOrderList(); renderVariantTable(); }
+    });
+  });
+  wrap.querySelectorAll('.sc-down').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var key = btn.getAttribute('data-static-col'), idx = order.indexOf(key);
+      if(idx < order.length-1){ var tmp = order[idx+1]; order[idx+1] = order[idx]; order[idx] = tmp; state.staticColOrder = order; renderColumnOrderList(); renderVariantTable(); }
+    });
+  });
+}
+
 /* ---- Variant entry table ---- */
 /* Product id of a variant IF it has already been published (so a Details / Dealer Pricing panel can open for it). */
 function specVariantExistingPid(state, v){
@@ -5546,7 +5494,8 @@ function renderVariantTable(){
 
   headRow.innerHTML =
     state.fields.map(function(f){ return '<th data-field-th="'+f.id+'">'+esc(f.label || '(untitled field)')+'</th>'; }).join('') +
-    '<th>Item code</th><th>Price (MRP) ₹</th><th>Disc %</th><th>GST %</th><th>Stock <span style="font-weight:400;">(blank = unlimited)</span></th><th></th>';
+    staticColOrder(state).map(function(k){ return STATIC_VARIANT_COLS[k].th; }).join('') +
+    '<th></th>';
 
   if(state.variants.length === 0){
     body.innerHTML = '<tr><td colspan="'+(state.fields.length+6)+'" class="ac-sub" style="text-align:center; padding:14px;">No items yet — tap "+ Add item".</td></tr>';
@@ -5557,11 +5506,7 @@ function renderVariantTable(){
       state.fields.map(function(f){
         return '<td><input type="text" class="sv-field" data-variant-id="'+v.id+'" data-field-id="'+f.id+'" value="'+esc(v.values[f.id]||'')+'" style="width:100%; min-width:90px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>';
       }).join('') +
-      '<td><input type="text" class="sv-part" data-variant-id="'+v.id+'" value="'+esc(v.part||'')+'" placeholder="optional" style="width:110px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>' +
-      '<td><input type="number" class="sv-mrp" data-variant-id="'+v.id+'" value="'+(v.mrp||0)+'" style="width:90px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>' +
-      '<td><input type="number" class="sv-disc" data-variant-id="'+v.id+'" value="'+(v.discountPct||0)+'" step="0.01" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>' +
-      '<td><input type="number" class="sv-gst" data-variant-id="'+v.id+'" value="'+(v.gstPct!==undefined?v.gstPct:18)+'" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>' +
-      '<td><input type="number" class="sv-stock" data-variant-id="'+v.id+'" min="0" value="'+((v.stock===undefined||v.stock===null||v.stock==='')?'':v.stock)+'" placeholder="∞" style="width:70px; border:1.3px solid #ddd3ba; border-radius:6px; padding:5px 7px; font-size:12px;"></td>' +
+      staticColOrder(state).map(function(k){ return STATIC_VARIANT_COLS[k].td(v); }).join('') +
       '<td style="white-space:nowrap;">'+(specVariantExistingPid(state, v) ? '<button type="button" class="btn-admin sm outline sv-dealer" data-variant-id="'+v.id+'" title="Dealer pricing for this item">💲</button> ' : '')+'<button type="button" class="btn-admin sm outline sv-dup" data-variant-id="'+v.id+'" title="Duplicate this item">⧉</button> <button type="button" class="btn-admin sm maroon sv-remove" data-variant-id="'+v.id+'">✕</button></td>' +
     '</tr>';
   }).join('');
@@ -7291,8 +7236,7 @@ function renderAdminBroadcast(){
   var toolbar = '<div class="admin-toolbar"><h2>Broadcast to Dealers</h2></div>';
   var form = '<div class="admin-card">' +
     '<div class="admin-form-grid">' +
-      '<div class="full"><label>Message (English)</label><textarea id="bcEn" rows="2" placeholder="e.g. We will be closed on Oct 2 for Gandhi Jayanti."></textarea></div>' +
-      '<div class="full"><label>Message (Tamil) — optional</label><textarea id="bcTa" rows="2" placeholder="தமிழில் செய்தி (விருப்பத்தேர்வு)"></textarea></div>' +
+      '<div class="full"><label>Message</label><textarea id="bcEn" rows="2" placeholder="e.g. We will be closed on Oct 2 for Gandhi Jayanti."></textarea></div>' +
     '</div>' +
     '<button class="btn-admin mt-2" id="sendBroadcastBtn">📢 Send broadcast</button>' +
   '</div>';
@@ -7300,16 +7244,15 @@ function renderAdminBroadcast(){
     (BROADCASTS.length === 0 ? '<div class="ac-sub">No broadcasts sent yet.</div>' :
       BROADCASTS.slice().reverse().map(function(b){
         return '<div class="oi-line" style="align-items:flex-start;"><span><div style="font-size:10px; color:var(--ink-600);">'+esc(b.date)+'</div>' +
-          '<div>'+esc(b.en)+'</div>' + (b.ta ? '<div style="color:var(--ink-600); font-size:11.5px;">'+esc(b.ta)+'</div>' : '') + '</span>' +
+          '<div>'+esc(b.en)+'</div></span>' +
           '<button class="btn-admin sm maroon" data-del-broadcast="'+b.id+'">Delete</button></div>';
       }).join('')
     ) + '</div>';
   adminMain.innerHTML = toolbar + form + history;
   document.getElementById('sendBroadcastBtn').addEventListener('click', function(){
     var en = document.getElementById('bcEn').value.trim();
-    var ta = document.getElementById('bcTa').value.trim();
-    if(!en){ showToast('Enter an English message'); return; }
-    sendBroadcast(en, ta);
+    if(!en){ showToast('Enter a message'); return; }
+    sendBroadcast(en);
     showToast('Broadcast sent to all dealers');
     renderAdminBroadcast();
   });
@@ -7608,8 +7551,14 @@ repairDuplicateSpecGroups();
 migrateAgriCasingToCatalog();
 warnDuplicateSpecGroups();
 init();
-runScheduledOrderStatusChecks();
+// Only run auto-status processing once someone is actually signed in. This used to run the
+// instant the page loaded for anyone, including at the bare login screen, so orders could
+// visibly jump status right at the moment ANY dealer or admin logged in, with nothing on
+// screen explaining why. This changes only WHEN the (client-side, no real server) check is
+// allowed to fire — not what the configured auto-status rules themselves do.
+if(session || adminSession) runScheduledOrderStatusChecks();
 setInterval(function(){
+  if(!session && !adminSession) return;
   var n = runScheduledOrderStatusChecks();
   if(n && typeof currentAdminTab !== 'undefined' && adminSession && currentAdminTab === 'orders') renderAdminOrders();
 }, 60000);
