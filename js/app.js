@@ -996,7 +996,7 @@ function nextBannerId(){ return BANNERS.reduce(function(m,b){ return Math.max(m,
 
 /* ---- Offer Zone ---- */
 var SEED_OFFERS = [
-  { id:1, badge:'NEW', title:'Sample offer', desc:'Edit or remove this from Admin → Marketing → Offers.', active:true }
+  { id:1, badge:'NEW', title:'Sample offer', desc:'Edit or remove this from Admin → Marketing → Offers.', linkType:'url', linkValue:'', active:true }
 ];
 function loadOffers(){
   try{
@@ -2097,6 +2097,69 @@ function openProductDetail(id){
   }, 60);
 }
 
+/* Shared by banners AND offers: what happens when the customer taps one, based on what admin
+   picked in its "Link" field — jump straight to a product or a category instead of only ever
+   being able to open an outside URL in a new tab. */
+function navigateToLinkTarget(type, value){
+  if(!type || type === 'url'){ if(value) window.open(value, '_blank'); return; }
+  if(type === 'category'){
+    catalogCategoryId = value; catalogSubCategoryId = null;
+    setView('categories');
+    return;
+  }
+  if(type === 'product'){
+    var pid = Number(value);
+    var p = PRODUCTS.find(function(x){ return x.id === pid; });
+    if(!p) return;
+    if(p.isCatalogVariant){
+      var g = SPEC_GROUPS.find(function(x){ return x.id === p.specGroupId; });
+      if(g){ setView('categories'); openCatalogCardModal(g); return; }
+    }
+    openProductDetail(pid);
+  }
+}
+/* One consistent "Link" control for the Banner and Offer admin editors: a type dropdown plus
+   whichever picker fits (a category list, a product list, or a plain URL box), so admin never
+   has to hand-type an id. `prefix` keeps each editor's element ids from colliding (e.g. "bn"
+   for banners, "of" for offers). */
+function linkTargetEditorHtml(prefix, type, value){
+  type = type || 'url';
+  return '<div class="full"><label>Link (optional)</label>' +
+    '<select id="'+prefix+'LinkType" style="margin-bottom:6px;">' +
+      '<option value="url"'+(type==='url'?' selected':'')+'>Outside URL</option>' +
+      '<option value="category"'+(type==='category'?' selected':'')+'>A catalog category</option>' +
+      '<option value="product"'+(type==='product'?' selected':'')+'>A specific product</option>' +
+    '</select>' +
+    '<div id="'+prefix+'LinkValueWrap">'+linkTargetValueFieldHtml(prefix, type, value)+'</div>' +
+  '</div>';
+}
+function linkTargetValueFieldHtml(prefix, type, value){
+  if(type === 'category'){
+    return '<select id="'+prefix+'LinkValue">' +
+      '<option value="">Choose a category…</option>' +
+      CATALOG_CATEGORIES.map(function(c){ return '<option value="'+esc(c.id)+'"'+(value===c.id?' selected':'')+'>'+esc(c.name)+'</option>'; }).join('') +
+    '</select>';
+  }
+  if(type === 'product'){
+    return '<select id="'+prefix+'LinkValue">' +
+      '<option value="">Choose a product…</option>' +
+      PRODUCTS.filter(function(p){ return p.active !== false || p.isCatalogVariant; }).map(function(p){
+        return '<option value="'+p.id+'"'+(Number(value)===p.id?' selected':'')+'>'+esc(p.name)+(p.part?' ('+esc(p.part)+')':'')+'</option>';
+      }).join('') +
+    '</select>';
+  }
+  return '<input type="text" id="'+prefix+'LinkValue" value="'+esc(value||'')+'" placeholder="https://…">';
+}
+/* Swap the value picker in place when admin changes the Link type — call once, right after
+   the form's innerHTML is set, for whichever prefix that editor uses. */
+function wireLinkTargetEditor(prefix){
+  var sel = document.getElementById(prefix+'LinkType');
+  if(!sel) return;
+  sel.addEventListener('change', function(){
+    document.getElementById(prefix+'LinkValueWrap').innerHTML = linkTargetValueFieldHtml(prefix, sel.value, '');
+  });
+}
+
 function gridHtml(products){
   if(products.length === 0){
     return '<div class="empty-note"><div class="en-big">'+t('home.noResults')+'</div><div>'+t('home.tryDifferent')+'</div></div>';
@@ -2114,10 +2177,15 @@ function renderBannersHtml(){
   var active = BANNERS.filter(function(b){ return b.active !== false; });
   if(!active.length) return '';
   return '<div class="banner-scroller">' + active.map(function(b){
-    var bg = b.imageUrl ? 'background-image:url(\''+esc(b.imageUrl)+'\'); background:linear-gradient(0deg, rgba(10,19,34,.55), rgba(10,19,34,.35)), url(\''+esc(b.imageUrl)+'\');' : ('background:'+(b.color||'linear-gradient(135deg, var(--navy-900), var(--navy-700))')+';');
-    return '<div class="banner-slide" style="'+bg+'" data-link="'+esc(b.link||'')+'">' +
+    var images = (b.images && b.images.length) ? b.images : (b.imageUrl ? [b.imageUrl] : []);
+    var sizeKey = ['small','medium','large'].indexOf(b.size) !== -1 ? b.size : 'medium';
+    var bg = images.length ? 'background-image:url(\''+esc(images[0])+'\'); background:linear-gradient(0deg, rgba(10,19,34,.55), rgba(10,19,34,.35)), url(\''+esc(images[0])+'\');' : ('background:'+(b.color||'linear-gradient(135deg, var(--navy-900), var(--navy-700))')+';');
+    return '<div class="banner-slide banner-size-'+sizeKey+'" style="'+bg+'" ' +
+        'data-banner-id="'+b.id+'" data-link-type="'+esc(b.linkType||'url')+'" data-link-value="'+esc(b.linkValue||b.link||'')+'">' +
+      (images.length > 1 ? '<div class="bs-dots">'+images.map(function(_,i){ return '<span class="dot'+(i===0?' active':'')+'"></span>'; }).join('')+'</div>' : '') +
       '<div class="bs-title">'+esc(b.title||'')+'</div>' +
       (b.subtitle ? '<div class="bs-sub">'+esc(b.subtitle)+'</div>' : '') +
+      (b.buttonText ? '<button type="button" class="bs-btn">'+esc(b.buttonText)+'</button>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
@@ -2128,7 +2196,7 @@ function renderOfferZoneHtml(){
   return '<div class="offer-zone">' +
     '<div class="oz-title">🎁 '+t('offer.title')+'</div>' +
     active.map(function(o){
-      return '<div class="offer-chip">' +
+      return '<div class="offer-chip" data-link-type="'+esc(o.linkType||'url')+'" data-link-value="'+esc(o.linkValue||'')+'">' +
         (o.badge ? '<span class="oc-badge">'+esc(o.badge)+'</span>' : '') +
         '<div class="oc-title">'+esc(o.title||'')+'</div>' +
         (o.desc ? '<div class="oc-desc">'+esc(o.desc)+'</div>' : '') +
@@ -2279,11 +2347,35 @@ function renderHome(){
   var loadMoreBtn = document.getElementById('homeLoadMoreBtn');
   if(loadMoreBtn) loadMoreBtn.addEventListener('click', function(){ homeVisibleCount += HOME_PAGE_SIZE; renderHome(); });
 
-  main.querySelectorAll('.banner-slide').forEach(function(el){
-    var link = el.getAttribute('data-link');
-    if(link){ el.style.cursor='pointer'; el.addEventListener('click', function(){ window.open(link, '_blank'); }); }
+    main.querySelectorAll('.banner-slide[data-banner-id]').forEach(function(el){
+    var linkType = el.getAttribute('data-link-type');
+    var linkValue = el.getAttribute('data-link-value');
+    if(linkValue){
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', function(){ navigateToLinkTarget(linkType, linkValue); });
+    }
+    // Multi-image auto-rotate, same 3.5s pattern used on catalog cards
+    var bId = Number(el.getAttribute('data-banner-id'));
+    var b = BANNERS.find(function(x){ return x.id === bId; });
+    var images = (b && b.images && b.images.length) ? b.images : (b && b.imageUrl ? [b.imageUrl] : []);
+    if(images.length > 1){
+      var idx = 0;
+      setInterval(function(){
+        idx = (idx + 1) % images.length;
+        el.style.backgroundImage = 'linear-gradient(0deg, rgba(10,19,34,.55), rgba(10,19,34,.35)), url(\''+images[idx].replace(/'/g,"\\'")+'\')';
+        el.querySelectorAll('.bs-dots .dot').forEach(function(d, di){ d.classList.toggle('active', di === idx); });
+      }, 3500);
+    }
   });
-
+  main.querySelectorAll('.offer-chip[data-link-value]').forEach(function(el){
+    var linkValue = el.getAttribute('data-link-value');
+    if(linkValue){
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', function(){
+        navigateToLinkTarget(el.getAttribute('data-link-type'), linkValue);
+      });
+    }
+  });
   main.querySelectorAll('.cat-chip[data-cat]').forEach(function(chip){
     chip.addEventListener('click', function(){
       catalogCategoryId = null; catalogSubCategoryId = null;
@@ -6455,27 +6547,45 @@ function renderAdminBanners(){
 }
 function openBannerEditor(id){
   var isNew = id === null;
-  var b = isNew ? { id:nextBannerId(), title:'', subtitle:'', color:BANNER_COLOR_PRESETS[0], imageUrl:'', link:'', active:true } : BANNERS.find(function(x){ return x.id === id; });
+  var b = isNew ? { id:nextBannerId(), title:'', subtitle:'', color:BANNER_COLOR_PRESETS[0], imageUrl:'', images:[], size:'medium', buttonText:'', linkType:'url', linkValue:'', link:'', active:true } : BANNERS.find(function(x){ return x.id === id; });
   if(!b) return;
+  // Older saved banners only ever had a single imageUrl / plain link — fold those into the
+  // new (list-of-images / typed-link) shape the first time this banner is opened, so nothing
+  // existing breaks and the new fields still have something sensible to show.
+  if(!b.images) b.images = b.imageUrl ? [b.imageUrl] : [];
+  if(!b.size) b.size = 'medium';
+  if(!b.linkType){ b.linkType = 'url'; b.linkValue = b.link || ''; }
   document.getElementById('bannerOffcanvasTitle').textContent = isNew ? 'Add Banner' : 'Edit Banner';
   var body = document.getElementById('bannerOffcanvasBody');
   body.innerHTML =
     '<div class="admin-form-grid">' +
       '<div class="full"><label>Title</label><input type="text" id="bnTitle" value="'+esc(b.title)+'"></div>' +
       '<div class="full"><label>Subtitle</label><input type="text" id="bnSubtitle" value="'+esc(b.subtitle||'')+'"></div>' +
-      '<div class="full"><label>Color style</label><select id="bnColor">' +
+      '<div class="full"><label>Button text (optional) — e.g. "Shop now"</label><input type="text" id="bnButtonText" value="'+esc(b.buttonText||'')+'"></div>' +
+      '<div class="full"><label>Banner size</label><select id="bnSize">' +
+        '<option value="small"'+(b.size==='small'?' selected':'')+'>Small</option>' +
+        '<option value="medium"'+(b.size==='medium'?' selected':'')+'>Medium</option>' +
+        '<option value="large"'+(b.size==='large'?' selected':'')+'>Large</option>' +
+      '</select></div>' +
+      '<div class="full"><label>Color style (used when there is no image)</label><select id="bnColor">' +
         BANNER_COLOR_PRESETS.map(function(c,i){ return '<option value="'+esc(c)+'"'+(b.color===c?' selected':'')+'>Preset '+(i+1)+'</option>'; }).join('') +
       '</select></div>' +
-      '<div class="full"><label>Image URL (optional)</label><input type="text" id="bnImage" value="'+esc(b.imageUrl||'')+'" placeholder="https://…"></div>' +
-      '<div class="full"><label>Link URL (optional)</label><input type="text" id="bnLink" value="'+esc(b.link||'')+'" placeholder="https://…"></div>' +
+      '<div class="full"><label>Images (optional, one per line — more than one auto-rotates)</label><textarea id="bnImages" rows="3" placeholder="https://example.com/1.jpg">'+esc((b.images||[]).join('\n'))+'</textarea></div>' +
+      linkTargetEditorHtml('bn', b.linkType, b.linkValue) +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveBannerBtn" style="width:100%;">Save banner</button>';
+  wireLinkTargetEditor('bn');
   document.getElementById('saveBannerBtn').addEventListener('click', function(){
     b.title = document.getElementById('bnTitle').value.trim();
     b.subtitle = document.getElementById('bnSubtitle').value.trim();
+    b.buttonText = document.getElementById('bnButtonText').value.trim();
+    b.size = document.getElementById('bnSize').value;
     b.color = document.getElementById('bnColor').value;
-    b.imageUrl = document.getElementById('bnImage').value.trim();
-    b.link = document.getElementById('bnLink').value.trim();
+    b.images = document.getElementById('bnImages').value.split('\n').map(function(s){ return s.trim(); }).filter(Boolean);
+    b.imageUrl = b.images[0] || '';   // kept in sync for any older code path that still reads it
+    b.linkType = document.getElementById('bnLinkType').value;
+    b.linkValue = document.getElementById('bnLinkValue').value.trim();
+    b.link = b.linkType === 'url' ? b.linkValue : '';   // kept in sync for the same reason
     var list = BANNERS.filter(function(x){ return x.id !== b.id; });
     list.push(b);
     list.sort(function(x,y){ return x.id - y.id; });
@@ -6542,8 +6652,9 @@ function renderAdminOffers(){
 }
 function openOfferEditor(id){
   var isNew = id === null;
-  var o = isNew ? { id:nextOfferId(), badge:'', title:'', desc:'', active:true } : OFFERS.find(function(x){ return x.id === id; });
+  var o = isNew ? { id:nextOfferId(), badge:'', title:'', desc:'', linkType:'url', linkValue:'', active:true } : OFFERS.find(function(x){ return x.id === id; });
   if(!o) return;
+  if(!o.linkType) o.linkType = 'url';   // older saved offers predate the link field
   document.getElementById('offerOffcanvasTitle').textContent = isNew ? 'Add Offer' : 'Edit Offer';
   var body = document.getElementById('offerOffcanvasBody');
   body.innerHTML =
@@ -6551,12 +6662,16 @@ function openOfferEditor(id){
       '<div class="full"><label>Badge (optional)</label><input type="text" id="ofBadge" value="'+esc(o.badge||'')+'" placeholder="e.g. LIMITED"></div>' +
       '<div class="full"><label>Title</label><input type="text" id="ofTitle" value="'+esc(o.title)+'"></div>' +
       '<div class="full"><label>Description</label><textarea id="ofDesc" rows="3">'+esc(o.desc||'')+'</textarea></div>' +
+      linkTargetEditorHtml('of', o.linkType, o.linkValue) +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveOfferBtn" style="width:100%;">Save offer</button>';
+  wireLinkTargetEditor('of');
   document.getElementById('saveOfferBtn').addEventListener('click', function(){
     o.badge = document.getElementById('ofBadge').value.trim();
     o.title = document.getElementById('ofTitle').value.trim();
     o.desc = document.getElementById('ofDesc').value.trim();
+    o.linkType = document.getElementById('ofLinkType').value;
+    o.linkValue = document.getElementById('ofLinkValue').value.trim();
     var list = OFFERS.filter(function(x){ return x.id !== o.id; });
     list.push(o);
     list.sort(function(x,y){ return x.id - y.id; });
