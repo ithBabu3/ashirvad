@@ -42,7 +42,7 @@
         ]
       },
       {
-        "source": "/admin/**",
+        "source": "/{admin,distributor}/**",
         "headers": [
           {
             "key": "X-Robots-Tag",

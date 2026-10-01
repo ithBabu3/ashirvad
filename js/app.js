@@ -3062,7 +3062,7 @@ function placeOrder(){
   var addresses = getDealerAddresses(session);
   var chosenAddr = addresses.find(function(a){ return a.id === selectedAddressId; }) || addresses[0];
   var allOrders = getAllOrders();
-  var orderId = 'AC' + (1000 + allOrders.length + 1);
+  var orderId = 'AC' + new Date().toISOString().slice(2, 10).replace(/-/g, '') + '-' + Math.random().toString(36).slice(2, 6).toUpperCase();   // e.g. AC260930-K3F9
   var dateStr = new Date().toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) +
     ', ' + new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' });
   var order = {
@@ -3430,7 +3430,8 @@ function renderAdmin(){
     MARKETING_VIEW = currentAdminTab; currentAdminTab = 'marketing'; renderAdminMarketing();   // legacy tab names
   }
   else if(currentAdminTab === 'configuration') renderAdminConfiguration();
-  else if(currentAdminTab === 'reports') renderAdminReports();
+  else if(currentAdminTab === 'reports') renderAdminReports();    
+  else if(currentAdminTab === 'distributors' && window.__acAdminTabs && window.__acAdminTabs.distributors) window.__acAdminTabs.distributors();
 }
 
 /* ---------------- Dashboard tab ---------------- */
@@ -7641,6 +7642,12 @@ window.addEventListener('hashchange', function(){
     document.getElementById('adminScreen').classList.remove('d-none');
   }
 });
+
+window.__acApi = {
+  esc: esc, showToast: showToast, logAudit: logAudit,
+  getProducts: function(){ return PRODUCTS; },
+  saveProducts: saveProducts, nextProductId: nextProductId
+};
 
 /* ---- Hooks used by the Firebase layer (js/cloud/firebase-boot.js). No effect without it. ---- */
 window.__acToast = showToast;

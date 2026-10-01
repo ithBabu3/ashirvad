@@ -12,6 +12,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    function isDistributor() { return request.auth != null && request.auth.token.email != null
+                                      && request.auth.token.email.matches('.*@distributor[.]ashirvadconnect[.]app'); }
+    function myDistId()      { return request.auth.token.email.split('@')[0]; }
+    function distDoc()       { return get(/databases/$(database)/documents/distributors/$(myDistId())).data; }
     function signedIn()  { return request.auth != null; }
     function isAdmin()   { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
     function isDealer()  { return signedIn() && request.auth.token.email != null
@@ -103,5 +107,53 @@ service cloud.firestore {
       allow create: if signedIn();
       allow read, update, delete: if isAdmin();
     }
+
+        // ---- distributors ----
+    match /distributors/{id} {
+      allow read: if isAdmin() || (isDistributor() && id == myDistId());
+      allow create, delete: if isAdmin();
+      // a distributor may only tap "all up to date" (lastConfirmedAt) on his own doc
+      allow update: if isAdmin() || (isDistributor() && id == myDistId()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastConfirmedAt'])
+            && request.resource.data.lastConfirmedAt is number);
+    }
+
+    // one doc per (distributor, product) => same product never duplicates.
+    // admin controls visible / showPrice / price snapshot; distributor may ONLY change qty.
+    match /distributor_stock/{id} {
+      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isDistributor()
+            && resource.data.distributorId == myDistId()
+            && resource.data.visible == true
+            && distDoc().isActive == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty', 'updatedAt', 'updatedBy'])
+            && request.resource.data.qty is number && request.resource.data.qty >= 0);
+    }
+
+    // new-product requests (only if admin switched "can upload" on for that distributor)
+    match /distributor_requests/{id} {
+      function reqOk(d) {
+        return d.distributorId == myDistId() && d.status == 'pending'
+          && d.keys().hasOnly(['id','distributorId','name','size','part','partKey','mrp','qty','note','status','createdAt'])
+          && d.qty is number && d.qty >= 0;
+      }
+      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
+      allow create: if isAdmin() || (isDistributor() && reqOk(request.resource.data)
+                        && distDoc().canUpload == true && distDoc().isActive == true);
+      allow update: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+                        && resource.data.status == 'pending' && reqOk(request.resource.data));
+      allow delete: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+                        && resource.data.status == 'pending');
+    }
+
+    // stock-change history
+    match /distributor_log/{id} {
+      allow read: if isAdmin();
+      allow create: if isDistributor() && request.resource.data.distributorId == myDistId()
+                    && request.resource.data.keys().hasOnly(['distributorId','productId','name','part','from','to','ts']);
+      allow update, delete: if false;
+    }
+
   }
 }

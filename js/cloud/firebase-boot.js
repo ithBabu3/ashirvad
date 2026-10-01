@@ -34,7 +34,12 @@ function loadScript(src){
   });
 }
 function startApp(){
-  return loadScript(APP_SRC).then(function(){ setTimeout(function(){ CLOUD.writesEnabled = true; }, 700); });
+  return loadScript(APP_SRC)
+    .then(function(){
+      if(CLOUD.role !== 'admin') return;
+      return loadScript(APP_SRC.replace('app.js', 'admin-distributors.js')).catch(function(){});
+    })
+    .then(function(){ setTimeout(function(){ CLOUD.writesEnabled = true; }, 700); });
 }
 
 if(!enabled){ startApp(); return; }   // local mode — nothing else to do

@@ -28,6 +28,7 @@ const readline = require('readline');
 const ROOT = path.join(__dirname, '..');
 const DEALER_DOMAIN = 'dealer.ashirvadconnect.app';   // keep in sync with js/firebase-config.js + firestore.rules
 const ADMIN_DOMAIN  = 'admin.ashirvadconnect.app';
+const DIST_DOMAIN = 'distributor.ashirvadconnect.app';
 
 // Line queue: works both when typing interactively and when answers are pasted / piped in all at once.
 function makeAsker() {
@@ -131,9 +132,18 @@ async function main() {
     await admin.auth().updateUser(user.uid, { password: b });
     return console.log(`✔ Password reset for dealer ${phone}`);
   }
+    
+  if (cmd === 'distributor-password') {
+    if (!a || !b) return console.error('Usage: node setup.js distributor-password <login-id> <new password>');
+    if (b.length < 6) return console.error('Password must be at least 6 characters.');
+    const user = await admin.auth().getUserByEmail(`${a.toLowerCase()}@${DIST_DOMAIN}`);
+    await admin.auth().updateUser(user.uid, { password: b });
+    return console.log(`✔ Password reset for distributor ${a}`);
+  }
+
   if (cmd === 'check') {
     const db = admin.firestore();
-    const cols = ['admins', 'dealers', 'accounts', 'orders', 'payments', 'products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_notify', 'audit_log'];
+    const cols = ['admins', 'dealers', 'accounts', 'orders', 'payments', 'products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_notify', 'audit_log','distributors', 'distributor_stock', 'distributor_requests'];
     console.log('Connected. Documents per collection:');
     for (const c of cols) { const s = await db.collection(c).count().get(); console.log('  ' + c.padEnd(22) + s.data().count); }
     const st = await db.doc('config/settings').get();
