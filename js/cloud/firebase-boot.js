@@ -37,7 +37,8 @@ function startApp(){
   return loadScript(APP_SRC)
     .then(function(){
       if(CLOUD.role !== 'admin') return;
-      return loadScript(APP_SRC.replace('app.js', 'admin-distributors.js')).catch(function(){});
+      return loadScript(APP_SRC.replace('app.js', 'admin-distributors.js'))
+        .catch(function(e){ console.error('[AshirvadConnect] could not load admin-distributors.js — is the file named exactly js/admin-distributors.js ?', e); });
     })
     .then(function(){ setTimeout(function(){ CLOUD.writesEnabled = true; }, 700); });
 }

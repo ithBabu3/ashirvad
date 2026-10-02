@@ -44,3 +44,19 @@ Use HTTPS, and deploy at the domain root (or its own subdomain).
 ## Important before going live
 Complete SETUP.md so data lives in Firebase (cloud mode). In local mode data stays in each browser and the
 built-in admin password in `js/app.js` applies — testing only.
+
+## v1.5.0 — distributor fixes
+- Files renamed with proper extensions: `js/admin-distributors.js`, `js/distributor.js`, `distributor/index.html`.
+- Per-distributor stock visibility (Distributors → Edit → "What this distributor can see about stock"):
+  *Only his own stock count* or *Company (existing) stock list + his own count*. Company stock is mirrored
+  automatically from Products & Pricing and refreshed whenever products/cards change and every minute.
+- Catalog-card items are listed under their card with every spec value (not just the first); tick a card to show all its items.
+- Admin can type an opening stock per item when assigning; changes are written to the Activity log.
+- Firestore rules: distributors can no longer read the product catalogue; they only read rows shown to them.
+  **Run `firebase deploy --only firestore:rules,hosting` after copying these files.**
+
+## v1.6.0
+- Admin → Distributors → **📈 Stock added**: per-distributor units added / reduced / net, filter by distributor and period,
+  "only increases" toggle, by-distributor / by-product toggle, expandable product detail, CSV. Overview also has a distributor filter.
+- Distributor portal: My history tab, sort, "＋Recv" (add received units), clickable Low/Out chips, total units, share low-stock list.
+- **Deploy:** `firebase deploy --only firestore,hosting` (rules + the new composite index for the history queries).

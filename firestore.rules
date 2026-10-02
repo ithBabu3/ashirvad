@@ -17,6 +17,8 @@ service cloud.firestore {
     function myDistId()      { return request.auth.token.email.split('@')[0]; }
     function distDoc()       { return get(/databases/$(database)/documents/distributors/$(myDistId())).data; }
     function signedIn()  { return request.auth != null; }
+    // distributors are signed in too, but must NEVER read the catalogue (it holds dealer prices + warehouse stock)
+    function staffOrDealer() { return signedIn() && !isDistributor(); }
     function isAdmin()   { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
     function isDealer()  { return signedIn() && request.auth.token.email != null
                                   && request.auth.token.email.matches('.*@dealer[.]ashirvadconnect[.]app'); }
@@ -31,21 +33,21 @@ service cloud.firestore {
     }
 
     // ---- shared catalogue & configuration: every signed-in user reads, only admin writes ----
-    match /products/{id}               { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /spec_groups/{id}            { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /catalog_categories/{id}     { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /catalog_subcategories/{id}  { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /offers/{id}                 { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /banners/{id}                { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /calc_rules/{id}             { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /broadcasts/{id}             { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /config/settings             { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /products/{id}               { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /spec_groups/{id}            { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /catalog_categories/{id}     { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /catalog_subcategories/{id}  { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /offers/{id}                 { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /banners/{id}                { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /calc_rules/{id}             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /broadcasts/{id}             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /config/settings             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
 
     // ---- running invoice counter: anyone signed in may raise it, never lower it ----
     match /config/invoice_seq {
-      allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.n is number;
-      allow update: if isAdmin() || (signedIn() && request.resource.data.n is number
+      allow read: if staffOrDealer();
+      allow create: if staffOrDealer() && request.resource.data.n is number;
+      allow update: if isAdmin() || (staffOrDealer() && request.resource.data.n is number
                                      && request.resource.data.n >= resource.data.n);
     }
 
@@ -104,7 +106,7 @@ service cloud.firestore {
 
     // ---- audit trail: anyone signed in can add a line, only admin can read / change it ----
     match /audit_log/{id} {
-      allow create: if signedIn();
+      allow create: if staffOrDealer();
       allow read, update, delete: if isAdmin();
     }
 
@@ -121,7 +123,8 @@ service cloud.firestore {
     // one doc per (distributor, product) => same product never duplicates.
     // admin controls visible / showPrice / price snapshot; distributor may ONLY change qty.
     match /distributor_stock/{id} {
-      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
+      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+                                   && resource.data.visible == true);
       allow create, delete: if isAdmin();
       allow update: if isAdmin() || (isDistributor()
             && resource.data.distributorId == myDistId()
@@ -142,16 +145,16 @@ service cloud.firestore {
       allow create: if isAdmin() || (isDistributor() && reqOk(request.resource.data)
                         && distDoc().canUpload == true && distDoc().isActive == true);
       allow update: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
-                        && resource.data.status == 'pending' && reqOk(request.resource.data));
+                        && resource.data.status in ['pending', 'rejected'] && reqOk(request.resource.data));
       allow delete: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
-                        && resource.data.status == 'pending');
+                        && resource.data.status in ['pending', 'rejected']);
     }
 
     // stock-change history
     match /distributor_log/{id} {
-      allow read: if isAdmin();
-      allow create: if isDistributor() && request.resource.data.distributorId == myDistId()
-                    && request.resource.data.keys().hasOnly(['distributorId','productId','name','part','from','to','ts']);
+      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
+      allow create: if isAdmin() || (isDistributor() && request.resource.data.distributorId == myDistId()
+                    && request.resource.data.keys().hasOnly(['distributorId','productId','name','part','from','to','ts']));
       allow update, delete: if false;
     }
 

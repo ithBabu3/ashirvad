@@ -283,13 +283,14 @@ function loadProducts(){
   } catch(e){}
   return JSON.parse(JSON.stringify(SEED_PRODUCTS));
 }
-function saveProducts(list){ localStorage.setItem('ac_products', JSON.stringify(list)); PRODUCTS = list; }
+function saveProducts(list){ localStorage.setItem('ac_products', JSON.stringify(list)); PRODUCTS = list; try{ if(window.__acCatalogChanged) window.__acCatalogChanged(); }catch(e){} }
 var PRODUCTS = loadProducts();
 function activeProducts(){ return PRODUCTS.filter(function(p){ return p.active !== false; }); }
 /* Products shown in the OLD fixed Home / Categories grids: excludes anything owned by a dynamic card. */
 function browseProducts(){ return activeProducts().filter(function(p){ return !p.isCatalogVariant; }); }
 function nextProductId(){
-  return PRODUCTS.reduce(function(m,p){ return Math.max(m,p.id); }, 0) + 1;
+  /* ids >= 900000 belong to catalog-card items (SPEC_VARIANT_ID_BASE) — never hand those out */
+  return PRODUCTS.reduce(function(m,p){ return (p.id < 900000) ? Math.max(m,p.id) : m; }, 0) + 1;
 }
 
 /* ================= Dynamic Catalog: Categories / Sub-categories / Spec-Group Cards =================
@@ -353,7 +354,7 @@ function loadSpecGroups(){
   try{ var s = JSON.parse(localStorage.getItem('ac_spec_groups') || 'null'); if(Array.isArray(s)) return s; } catch(e){}
   return [];
 }
-function saveSpecGroups(list){ localStorage.setItem('ac_spec_groups', JSON.stringify(list)); SPEC_GROUPS = list; syncSpecVariantProducts(); }
+function saveSpecGroups(list){ localStorage.setItem('ac_spec_groups', JSON.stringify(list)); SPEC_GROUPS = list; syncSpecVariantProducts(); try{ if(window.__acCatalogChanged) window.__acCatalogChanged(); }catch(e){} }
 var SPEC_GROUPS = loadSpecGroups();
 
 /* Sync every spec-group variant into PRODUCTS as a hidden, additive synthetic entry so the
@@ -5161,7 +5162,12 @@ function ensureSpecBuilderState(){
   return specBuilderState;
 }
 function nextSpecFieldId(state){ return 'f' + ((state.fields.reduce(function(m,f){ return Math.max(m, Number(String(f.id).replace('f',''))||0); },0)) + 1); }
-function nextSpecVariantId(state){ return (state.variants.reduce(function(m,v){ return Math.max(m, Number(v.id)||0); },0)) + 1; }
+function nextSpecVariantId(state){
+  /* monotonic: remember the highest id ever handed out on this card, so deleting the last item and
+     adding a new one can never give the new item the OLD item's id (distributor stock rows are keyed by it) */
+  var n = Math.max(state.variants.reduce(function(m,v){ return Math.max(m, Number(v.id)||0); },0), Number(state.vidSeq)||0) + 1;
+  state.vidSeq = n; return n;
+}
 
 function renderSpecGroupBuilder(){
   var adminMain = document.getElementById('adminMain');
@@ -7646,7 +7652,23 @@ window.addEventListener('hashchange', function(){
 window.__acApi = {
   esc: esc, showToast: showToast, logAudit: logAudit,
   getProducts: function(){ return PRODUCTS; },
-  saveProducts: saveProducts, nextProductId: nextProductId
+  getGroups: function(){ return SPEC_GROUPS; },
+  saveProducts: saveProducts, nextProductId: nextProductId,
+  /* The EXACT item as the admin sees it: for a catalog-card item, name = card title and size = ALL of the
+     item's field values (e.g. 2½" · Std class), plus card / category info so lists can be grouped. */
+  describe: function(p){
+    if(p && p.isCatalogVariant){
+      var g = SPEC_GROUPS.find(function(x){ return x.id === p.specGroupId; });
+      var v = g && (g.variants||[]).find(function(x){ return x.id === p.variantId; });
+      if(g && v){
+        var vals = v.values || {};
+        var spec = (g.fields||[]).map(function(f){ return String(vals[f.id] == null ? '' : vals[f.id]).trim(); }).filter(Boolean).join(' · ');
+        return { name: g.title, size: spec || p.size || '', gid: g.id, gtitle: g.title,
+                 cat: catalogCatName(g.categoryId) + (g.subCategoryId ? ' › ' + catalogSubName(g.subCategoryId) : '') };
+      }
+    }
+    return { name: p.name, size: p.size || '', gid: null, gtitle: '', cat: '' };
+  }
 };
 
 /* ---- Hooks used by the Firebase layer (js/cloud/firebase-boot.js). No effect without it. ---- */

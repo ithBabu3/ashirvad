@@ -9,7 +9,7 @@
 var CLOUD = window.AC_CLOUD, API;
 var DOMAIN = (window.AC_CLOUD_OPTIONS && window.AC_CLOUD_OPTIONS.distributorEmailDomain) || 'distributor.ashirvadconnect.app';
 var STALE_MS = 7 * 86400000;
-var S = { dists: new Map(), stock: new Map(), reqs: new Map(), view: 'list', started: false, q: '', logRows: null };
+var S = { dists: new Map(), stock: new Map(), reqs: new Map(), view: 'list', started: false, q: '', allProds: false, logRows: null, ad: { dist: '', period: '30', mode: 'dist', adminToo: false, onlyAdd: false, rows: null, key: '' }, ovDist: '', exp: {}, syncing: false, syncT: null };
 
 function noop(){}
 function esc(s){ return API.esc(s); }
@@ -28,6 +28,25 @@ function download(name, rows){
   document.body.appendChild(a); a.click(); a.remove();
 }
 function products(){ return API.getProducts(); }
+/* Exact name / spec / part of an item. Catalog-card items carry ALL of their spec values (e.g. 2½" · Std class), not just the first one. */
+function snapOf(p){
+  var x = (API && API.describe) ? API.describe(p) : { name: p.name, size: p.size };
+  return { name: String(x.name || ''), size: String(x.size || ''), part: String(p.part || '') };
+}
+/* The "existing" (company / warehouse) stock of a product; null = unlimited. */
+function companyOf(p){ var n = p.stock; if(n === undefined || n === null || n === '') return null; n = Number(n); return isFinite(n) ? Math.max(0, n) : null; }
+function sees(d){ return d && d.stockView === 'company'; }
+/* Commit any number of writes in chunks of 400 (Firestore allows 500 per batch). ops: {ref, data, merge?} or {ref, del:true} */
+function commitOps(ops){
+  var chunks = []; for(var i = 0; i < ops.length; i += 400) chunks.push(ops.slice(i, i + 400));
+  return chunks.reduce(function(pr, ch){
+    return pr.then(function(){
+      var b = db().batch();
+      ch.forEach(function(o){ if(o.del) b.delete(o.ref); else b.set(o.ref, o.data, { merge: o.merge !== false }); });
+      return b.commit();
+    });
+  }, Promise.resolve()).then(function(){ return ops.length; });
+}
 /* Newest sign that a distributor's stock is current: a qty change OR his "stock is up to date" tap. */
 function lastFresh(d){ return Math.max(Number(d.lastConfirmedAt) || 0, stockOf(d.id).reduce(function(m, s){ return Math.max(m, s.updatedAt || 0); }, 0)); }
 function isStale(d){ if(d.isActive === false) return false; var vis = stockOf(d.id).filter(function(s){ return s.visible; }); if(!vis.length) return false; var l = lastFresh(d); return !l || Date.now() - l > STALE_MS; }
@@ -51,6 +70,7 @@ function start(){
     db().collection(pair[0]).onSnapshot(function(snap){
       snap.docChanges().forEach(function(ch){ if(ch.type === 'removed') pair[1].delete(ch.doc.id); else { var d = ch.doc.data(); d.id = ch.doc.id; pair[1].set(ch.doc.id, d); } });
       updateBadge();
+      queueSync(3000);
       if(tabActive() && !busy()) render();
     }, function(e){ console.warn('[distributors]', pair[0], e); });
   });
@@ -58,21 +78,36 @@ function start(){
 function stockOf(distId){ return Array.from(S.stock.values()).filter(function(s){ return s.distributorId === distId; }); }
 function pendingReqs(){ return Array.from(S.reqs.values()).filter(function(r){ return r.status === 'pending'; }); }
 
-/* Keep the name / part / MRP copy that distributors see in step with the real products (no writes when nothing changed). */
-function syncSnapshots(){
-  var batch = db().batch(), n = 0;
-  S.stock.forEach(function(s, id){
-    var p = productById(s.productId); if(!p) return;
-    var upd = {};
-    if(s.name !== p.name) upd.name = p.name;
-    if((s.size || '') !== (p.size || '')) upd.size = p.size || '';
-    if(s.part !== p.part) upd.part = p.part;
-    if(s.showPrice){ if(s.mrp !== p.mrp) upd.mrp = Number(p.mrp) || 0; if(s.gstPct !== p.gstPct) upd.gstPct = Number(p.gstPct) || 0; }
-    if(Object.keys(upd).length && n < 400){ batch.set(db().collection('distributor_stock').doc(id), upd, { merge: true }); n++; }
-  });
-  if(!n) return Promise.resolve(0);
-  return batch.commit().then(function(){ return n; }).catch(function(){ return 0; });
+/* What a stock row must look like right now, given the real product and the distributor's settings.
+   Returns only the fields that differ (null when the row is already correct). */
+function diffRow(s){
+  var p = productById(s.productId), d = S.dists.get(s.distributorId); if(!p || !d) return null;
+  var sn = snapOf(p), upd = {};
+  if(s.name !== sn.name) upd.name = sn.name;
+  if((s.size || '') !== sn.size) upd.size = sn.size;
+  if(s.part !== sn.part) upd.part = sn.part;
+  if(s.showPrice){
+    if(s.mrp !== (Number(p.mrp) || 0)) upd.mrp = Number(p.mrp) || 0;
+    if(s.gstPct !== (Number(p.gstPct) || 0)) upd.gstPct = Number(p.gstPct) || 0;
+  } else {
+    if(s.mrp !== undefined) upd.mrp = FV().delete();          // price never stays on a row that must not show it
+    if(s.gstPct !== undefined) upd.gstPct = FV().delete();
+  }
+  if(sees(d)){ var c = companyOf(p); if(s.companyStock === undefined || s.companyStock !== c) upd.companyStock = c; }
+  else if(s.companyStock !== undefined) upd.companyStock = FV().delete();
+  return Object.keys(upd).length ? upd : null;
 }
+/* Keeps every distributor's copy (name, spec, part, MRP, company stock) in step with the real catalogue.
+   Runs when the tab opens, when products/cards are saved, when distributor data arrives and once a minute. */
+function syncSnapshots(){
+  if(!S.started || S.syncing || !API || !S.stock.size) return Promise.resolve(0);
+  var ops = [];
+  S.stock.forEach(function(s, id){ var u = diffRow(s); if(u) ops.push({ ref: db().collection('distributor_stock').doc(id), data: u }); });
+  if(!ops.length) return Promise.resolve(0);
+  S.syncing = true;
+  return commitOps(ops).then(function(n){ S.syncing = false; return n; }, function(e){ S.syncing = false; console.warn('[distributors] sync failed', e); return 0; });
+}
+function queueSync(ms){ clearTimeout(S.syncT); S.syncT = setTimeout(syncSnapshots, ms || 2500); }
 
 /* ---------------------------------------------------------------- render */
 function render(){
@@ -83,11 +118,11 @@ function render(){
   }
   start();
   var pend = pendingReqs().length;
-  var nav = [['list', '🚚 Distributors'], ['overview', '📦 Stock overview'], ['requests', '📥 Requests' + (pend ? ' (' + pend + ')' : '')], ['log', '🕘 Activity'], ['health', '🩺 Data check']]
+  var nav = [['list', '🚚 Distributors'], ['overview', '📦 Stock overview'], ['requests', '📥 Requests' + (pend ? ' (' + pend + ')' : '')], ['added', '📈 Stock added'], ['log', '🕘 Activity'], ['health', '🩺 Data check']]
     .map(function(v){ return '<button type="button" class="btn-admin sm ' + (S.view === v[0] ? '' : 'outline') + '" data-dv="' + v[0] + '" style="margin-right:6px">' + v[1] + '</button>'; }).join('');
   m.innerHTML = '<div class="admin-toolbar"><h2>Distributors</h2></div><div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px">' + nav + '</div><div id="dvBody"></div>';
   m.querySelectorAll('[data-dv]').forEach(function(b){ b.onclick = function(){ S.view = b.getAttribute('data-dv'); S.logRows = null; render(); }; });
-  ({ list: viewList, overview: viewOverview, requests: viewRequests, log: viewLog, health: viewHealth })[S.view]();
+  ({ list: viewList, overview: viewOverview, added: viewAdded, requests: viewRequests, log: viewLog, health: viewHealth })[S.view]();
 }
 
 /* ------------------------------------------------------ view: distributors */
@@ -102,7 +137,7 @@ function viewList(){
     var low = vis.filter(function(s){ return Number(s.qty) <= (Number(d.lowStockAt) || 10); }).length;
     h += '<div class="admin-card"><div class="ac-title">' + esc(d.name) + ' <span style="font-weight:400;font-size:12px">(' + esc(d.id) + ')</span> ' +
       (d.isActive === false ? '<span class="low-stock-pill" style="background:#fbdede;color:#a12626">Inactive</span>' : '<span class="low-stock-pill" style="background:#dff3e6;color:#1f7a3f">Active</span>') + '</div>' +
-      '<div class="ac-sub">' + esc(d.phone || '') + (d.city ? ' · ' + esc(d.city) : '') + ' · Upload products: <b>' + (d.canUpload ? 'Allowed' : 'Off') + '</b> · New products show price: <b>' + (d.defaultShowPrice ? 'Yes' : 'No') + '</b></div>' +
+      '<div class="ac-sub">' + esc(d.phone || '') + (d.city ? ' · ' + esc(d.city) : '') + ' · Upload products: <b>' + (d.canUpload ? 'Allowed' : 'Off') + '</b> · New products show price: <b>' + (d.defaultShowPrice ? 'Yes' : 'No') + '</b> · He sees: <b>' + (sees(d) ? 'company stock + his own' : 'only his own stock') + '</b></div>' +
       (d.notice ? '<div class="ac-sub">📌 Notice: ' + esc(d.notice) + '</div>' : '') +
       '<div class="ac-sub">' + vis.length + ' visible product(s) · ' + low + ' low/out · stock confirmed ' + ago(last) + (stale ? ' <span class="low-stock-pill">⚠ stale</span>' : '') + '</div>' +
       '<div class="ac-actions"><button class="btn-admin sm" data-prod="' + esc(d.id) + '">Products &amp; price</button>' +
@@ -122,9 +157,10 @@ function viewList(){
   body.querySelectorAll('[data-del]').forEach(function(b){ b.onclick = function(){
     var d = S.dists.get(b.getAttribute('data-del'));
     if(!confirm('Delete distributor "' + d.name + '" and all their stock rows?\n(Their login stops working immediately.)')) return;
-    var batch = db().batch(); batch.delete(db().collection('distributors').doc(d.id));
-    stockOf(d.id).forEach(function(s){ batch.delete(db().collection('distributor_stock').doc(s.id)); });
-    batch.commit().then(function(){ API.logAudit('Distributor deleted', d.name); toast('Deleted'); }).catch(function(e){ toast(e.message); });
+    var ops = [{ ref: db().collection('distributors').doc(d.id), del: true }];
+    stockOf(d.id).forEach(function(s){ ops.push({ ref: db().collection('distributor_stock').doc(s.id), del: true }); });
+    Array.from(S.reqs.values()).filter(function(r){ return r.distributorId === d.id; }).forEach(function(r){ ops.push({ ref: db().collection('distributor_requests').doc(r.id), del: true }); });
+    commitOps(ops).then(function(){ API.logAudit('Distributor deleted', d.name); toast('Deleted'); }).catch(function(e){ toast(e.message); });
   }; });
 }
 
@@ -156,6 +192,10 @@ function openDistForm(id){
     '<div><label>Phone</label><input id="fPhone" value="' + esc(d ? d.phone : '') + '"></div>' +
     '<div><label>City</label><input id="fCity" value="' + esc(d ? d.city : '') + '"></div>' +
     '<div><label>Low-stock alert at (qty)</label><input id="fLow" type="number" min="0" value="' + (d && d.lowStockAt != null ? d.lowStockAt : 10) + '"></div>' +
+    '<div class="full"><label>What this distributor can see about stock</label><select id="fView">' +
+      '<option value="own"' + (!sees(d) ? ' selected' : '') + '>Only his own stock count</option>' +
+      '<option value="company"' + (sees(d) ? ' selected' : '') + '>Company (existing) stock list + his own count</option></select>' +
+      '<div class="ac-sub">“Company stock” = the Stock figure you keep in Products &amp; Pricing. It stays up to date automatically. He can never change it.</div></div>' +
     '<div class="full"><label>Notice shown at the top of his page (optional)</label><input id="fNotice" maxlength="200" value="' + esc(d ? d.notice : '') + '" placeholder="e.g. Please update stock before 6 PM daily"></div>' +
     '<div class="full"><label><input type="checkbox" id="fUpload"' + (d && d.canUpload ? ' checked' : '') + '> Allow this distributor to add (request) new products</label></div>' +
     '<div class="full"><label><input type="checkbox" id="fPrice"' + (d && d.defaultShowPrice ? ' checked' : '') + '> Show price by default for newly assigned products</label></div>' +
@@ -165,11 +205,12 @@ function openDistForm(id){
   w.querySelector('#fSave').onclick = function(){
     var name = w.querySelector('#fName').value.trim(), err = w.querySelector('#fErr'), btn = w.querySelector('#fSave');
     var fields = { name: name, phone: w.querySelector('#fPhone').value.trim(), city: w.querySelector('#fCity').value.trim(),
-      lowStockAt: Number(w.querySelector('#fLow').value) || 10, notice: w.querySelector('#fNotice').value.trim(), canUpload: w.querySelector('#fUpload').checked, defaultShowPrice: w.querySelector('#fPrice').checked };
+      lowStockAt: Number(w.querySelector('#fLow').value) || 10, notice: w.querySelector('#fNotice').value.trim(), canUpload: w.querySelector('#fUpload').checked, defaultShowPrice: w.querySelector('#fPrice').checked,
+      stockView: w.querySelector('#fView').value === 'company' ? 'company' : 'own' };
     if(!name){ err.textContent = 'Name is required.'; return; }
     btn.disabled = true;
     if(d){
-      db().collection('distributors').doc(d.id).set(fields, { merge: true }).then(function(){ API.logAudit('Distributor updated', name); closeOv(); }).catch(function(e){ err.textContent = e.message; btn.disabled = false; });
+      db().collection('distributors').doc(d.id).set(fields, { merge: true }).then(function(){ API.logAudit('Distributor updated', name); closeOv(); queueSync(800); }).catch(function(e){ err.textContent = e.message; btn.disabled = false; });
       return;
     }
     var user = slug(w.querySelector('#fUser').value), pass = w.querySelector('#fPass').value;
@@ -184,54 +225,89 @@ function openDistForm(id){
   };
 }
 
-/* ---- which products a distributor sees, with / without price */
+/* ---- which products a distributor sees, with / without price, and his opening stock */
 function openAssign(distId){
   var d = S.dists.get(distId); if(!d) return;
-  var list = products().filter(function(p){ return p.id !== undefined; }).slice().sort(function(a, b){ return String(a.name).localeCompare(String(b.name)); });
-  var cur = {};   // productId -> { show, price }
-  list.forEach(function(p){ var s = S.stock.get(distId + '__' + p.id); cur[p.id] = { show: !!(s && s.visible), price: !!(s && s.showPrice), had: !!s }; });
+  // every item with its EXACT description; catalog-card items are grouped under their card
+  var list = products().filter(function(p){ return p.id !== undefined && p.id !== null; }).map(function(p){ return { p: p, x: API.describe(p) }; });
+  list.sort(function(a, b){
+    var ga = a.x.gid ? 1 : 0, gb = b.x.gid ? 1 : 0; if(ga !== gb) return ga - gb;
+    var c = (a.x.cat + '|' + a.x.gtitle).localeCompare(b.x.cat + '|' + b.x.gtitle); if(c) return c;
+    return String(a.x.gid ? a.x.size : a.x.name).localeCompare(String(b.x.gid ? b.x.size : b.x.name), undefined, { numeric: true });
+  });
+  var cur = {};   // productId -> { show, price, qty ('' = leave as is), had, oldQty }
+  list.forEach(function(r){ var s = S.stock.get(distId + '__' + r.p.id);
+    cur[r.p.id] = { show: !!(s && s.visible), price: !!(s && s.showPrice), had: !!s, oldQty: s ? (Number(s.qty) || 0) : 0, qty: s ? String(Number(s.qty) || 0) : '' }; });
   var w = overlay('<h5>' + esc(d.name) + ' — products &amp; price</h5>' +
-    '<div class="ac-sub mb-2">Tick <b>Show</b> to put a product on this distributor\'s page. Tick <b>Price</b> to let him see the MRP (he never sees discounts or dealer prices). Unticking Show hides it but keeps his stock number.</div>' +
-    '<input id="aQ" placeholder="Search name / part…" style="width:100%;margin-bottom:8px">' +
+    '<div class="ac-sub mb-2">Tick <b>Show</b> to put an item on this distributor\'s page (tick a card\'s box to show all its items). Tick <b>Price</b> to let him see the MRP (never discounts or dealer prices). <b>His stock</b> is his current quantity — type an opening figure if you already know it; he can change it later. Unticking Show hides an item but keeps his number.</div>' +
+    '<input id="aQ" placeholder="Search name / spec / part / category…" style="width:100%;margin-bottom:8px">' +
     '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn-admin sm outline" id="aShowAll">Show all listed</button><button class="btn-admin sm outline" id="aHideAll">Hide all listed</button><button class="btn-admin sm outline" id="aPriceOn">Price on (listed)</button><button class="btn-admin sm outline" id="aPriceOff">Price off (listed)</button></div>' +
     '<div id="aList" style="max-height:48vh;overflow:auto;border:1px solid #eee;border-radius:8px"></div>' +
     '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="aCancel" style="flex:1">Cancel</button><button class="btn-admin" id="aSave" style="flex:1">Save</button></div>');
-  function listed(){ var q = w.querySelector('#aQ').value.toLowerCase(); return list.filter(function(p){ return !q || (String(p.name) + ' ' + String(p.part)).toLowerCase().indexOf(q) >= 0; }); }
+  function listed(){
+    var q = w.querySelector('#aQ').value.toLowerCase().trim();
+    return list.filter(function(r){ return !q || (r.x.name + ' ' + r.x.size + ' ' + r.p.part + ' ' + r.x.cat).toLowerCase().indexOf(q) >= 0; });
+  }
   function paint(){
-    w.querySelector('#aList').innerHTML = '<table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left;padding:6px">Product</th><th>Show</th><th>Price</th></tr></thead><tbody>' +
-      listed().map(function(p){ var c = cur[p.id];
-        return '<tr style="border-top:1px solid #f0ead8"><td style="padding:6px">' + esc(p.name) + '<div style="font-size:11px;color:#777">' + esc(p.part) + (Number(p.mrp) ? ' · MRP ' + p.mrp : '') + (p.active === false && !p.isCatalogVariant ? ' · <b>inactive</b>' : '') + '</div></td>' +
-          '<td style="text-align:center"><input type="checkbox" data-s="' + p.id + '"' + (c.show ? ' checked' : '') + '></td>' +
-          '<td style="text-align:center"><input type="checkbox" data-p="' + p.id + '"' + (c.price ? ' checked' : '') + (c.show ? '' : ' disabled') + '></td></tr>'; }).join('') + '</tbody></table>';
+    var box = w.querySelector('#aList'), top = box.scrollTop, rows = listed(), html = '', lastG = null;
+    rows.forEach(function(r){
+      var p = r.p, c = cur[p.id], key = r.x.gid ? 'c' + r.x.gid : 'reg';
+      if(key !== lastG){
+        lastG = key;
+        var inG = rows.filter(function(z){ return (z.x.gid ? 'c' + z.x.gid : 'reg') === key; });
+        var all = inG.every(function(z){ return cur[z.p.id].show; });
+        html += '<tr style="background:#faf6ec"><td colspan="4" style="padding:6px"><label style="margin:0;font-weight:600"><input type="checkbox" data-g="' + key + '"' + (all ? ' checked' : '') + '> ' +
+          (r.x.gid ? '📇 ' + esc(r.x.gtitle) + ' <span style="font-weight:400;color:#777;font-size:11px">· ' + esc(r.x.cat) + ' · ' + inG.length + ' item(s)</span>' : 'Regular products') + '</label></td></tr>';
+      }
+      var own = companyOf(p);
+      html += '<tr style="border-top:1px solid #f0ead8"><td style="padding:6px">' + esc(r.x.gid ? (r.x.size || r.x.name) : r.x.name) +
+        '<div style="font-size:11px;color:#777">' + (r.x.gid ? '' : (r.x.size ? esc(r.x.size) + ' · ' : '')) + esc(p.part) + (Number(p.mrp) ? ' · MRP ' + p.mrp : '') + ' · company stock ' + (own === null ? '∞' : own) + (p.active === false && !p.isCatalogVariant ? ' · <b>inactive</b>' : '') + '</div></td>' +
+        '<td style="text-align:center"><input type="checkbox" data-s="' + p.id + '"' + (c.show ? ' checked' : '') + '></td>' +
+        '<td style="text-align:center"><input type="checkbox" data-p="' + p.id + '"' + (c.price ? ' checked' : '') + (c.show ? '' : ' disabled') + '></td>' +
+        '<td style="text-align:center"><input type="number" min="0" data-q="' + p.id + '" value="' + esc(c.qty) + '" placeholder="0" style="width:70px;padding:3px 5px"' + (c.show ? '' : ' disabled') + '></td></tr>';
+    });
+    box.innerHTML = '<table style="width:100%;font-size:12.5px"><thead><tr><th style="text-align:left;padding:6px">Item</th><th>Show</th><th>Price</th><th>His stock</th></tr></thead><tbody>' +
+      (html || '<tr><td colspan="4" style="padding:14px;color:#777">Nothing matches.</td></tr>') + '</tbody></table>';
+    box.scrollTop = top;
   }
   paint();
   w.querySelector('#aQ').oninput = paint;
+  function setShow(id, on){ var c = cur[id]; c.show = on; if(on && !c.had && d.defaultShowPrice) c.price = true; if(!on) c.price = false; }
   w.querySelector('#aList').onchange = function(e){
-    var s = e.target.getAttribute('data-s'), p = e.target.getAttribute('data-p');
-    if(s){ cur[s].show = e.target.checked; if(e.target.checked && !cur[s].had && d.defaultShowPrice) cur[s].price = true; if(!e.target.checked) cur[s].price = false; paint(); }
-    if(p) cur[p].price = e.target.checked;
+    var t = e.target, sId = t.getAttribute('data-s'), pId = t.getAttribute('data-p'), gKey = t.getAttribute('data-g');
+    if(sId){ setShow(sId, t.checked); paint(); }
+    else if(pId){ cur[pId].price = t.checked; }
+    else if(gKey){ listed().filter(function(r){ return (r.x.gid ? 'c' + r.x.gid : 'reg') === gKey; }).forEach(function(r){ setShow(r.p.id, t.checked); }); paint(); }
   };
-  function bulk(key, val){ listed().forEach(function(p){ cur[p.id][key] = val; if(key === 'show' && !val) cur[p.id].price = false; if(key === 'price' && val) cur[p.id].show = true; }); paint(); }
+  w.querySelector('#aList').oninput = function(e){ var q = e.target.getAttribute('data-q'); if(q) cur[q].qty = e.target.value; };
+  function bulk(key, val){ listed().forEach(function(r){ var c = cur[r.p.id]; if(key === 'show') setShow(r.p.id, val); else { c.price = val; if(val) c.show = true; } }); paint(); }
   w.querySelector('#aShowAll').onclick = function(){ bulk('show', true); };
   w.querySelector('#aHideAll').onclick = function(){ bulk('show', false); };
   w.querySelector('#aPriceOn').onclick = function(){ bulk('price', true); };
   w.querySelector('#aPriceOff').onclick = function(){ bulk('price', false); };
   w.querySelector('#aCancel').onclick = closeOv;
   w.querySelector('#aSave').onclick = function(){
-    var batch = db().batch(), n = 0;
-    list.forEach(function(p){
-      var c = cur[p.id], id = distId + '__' + p.id, old = S.stock.get(id);
+    var ops = [], n = 0, now = Date.now();
+    list.forEach(function(r){
+      var p = r.p, c = cur[p.id], id = distId + '__' + p.id, old = S.stock.get(id), sn = snapOf(p);
       if(!c.show && !old) return;                                  // never assigned, still not shown
-      if(old && !!old.visible === c.show && !!old.showPrice === c.price) return;   // unchanged
-      var row = { id: id, distributorId: distId, productId: p.id, name: p.name, size: p.size || '', part: p.part, visible: c.show, showPrice: c.show && c.price };
-      if(!old){ row.qty = 0; row.updatedAt = 0; row.updatedBy = 'admin'; }
-      if(row.showPrice){ row.mrp = Number(p.mrp) || 0; row.gstPct = Number(p.gstPct) || 0; }
-      else { row.mrp = FV().delete(); row.gstPct = FV().delete(); }   // price never leaves the server when hidden
-      batch.set(db().collection('distributor_stock').doc(id), row, { merge: true }); n++;
+      var wantQty = (c.show && String(c.qty).trim() !== '') ? Math.max(0, Math.floor(Number(c.qty) || 0)) : null;
+      var qtyChanged = wantQty !== null && (!old || (Number(old.qty) || 0) !== wantQty);
+      var showPrice = c.show && c.price;
+      if(old && !!old.visible === c.show && !!old.showPrice === showPrice && !qtyChanged) return;   // unchanged
+      var row = { id: id, distributorId: distId, productId: p.id, name: sn.name, size: sn.size, part: sn.part, visible: c.show, showPrice: showPrice };
+      if(!old){ row.qty = wantQty === null ? 0 : wantQty; row.updatedAt = wantQty === null ? 0 : now; row.updatedBy = 'admin'; }
+      else if(qtyChanged){ row.qty = wantQty; row.updatedAt = now; row.updatedBy = 'admin'; }
+      if(showPrice){ row.mrp = Number(p.mrp) || 0; row.gstPct = Number(p.gstPct) || 0; }
+      else { row.mrp = FV().delete(); row.gstPct = FV().delete(); }       // price never leaves the server when hidden
+      if(sees(d)) row.companyStock = companyOf(p); else row.companyStock = FV().delete();
+      ops.push({ ref: db().collection('distributor_stock').doc(id), data: row });
+      if(qtyChanged) ops.push({ ref: db().collection('distributor_log').doc(), merge: false, data: { distributorId: distId, productId: p.id, name: sn.name + (sn.size ? ' — ' + sn.size : ''), part: sn.part, from: old ? (Number(old.qty) || 0) : 0, to: wantQty, ts: now, by: 'admin' } });
+      n++;
     });
-    if(n > 400){ toast('Too many changes at once — save in two rounds'); return; }
-    (n ? batch.commit() : Promise.resolve()).then(function(){ if(n) API.logAudit('Distributor products updated', d.name + ': ' + n + ' change(s)'); toast(n ? 'Saved' : 'No changes'); closeOv(); })
-      .catch(function(e){ toast('Failed: ' + e.message); });
+    var btn = w.querySelector('#aSave'); btn.disabled = true;
+    (ops.length ? commitOps(ops) : Promise.resolve()).then(function(){ if(n) API.logAudit('Distributor products updated', d.name + ': ' + n + ' change(s)'); toast(n ? 'Saved (' + n + ' change' + (n > 1 ? 's' : '') + ')' : 'No changes'); closeOv(); })
+      .catch(function(e){ btn.disabled = false; toast('Failed: ' + e.message); });
   };
 }
 
@@ -239,29 +315,38 @@ function openAssign(distId){
 function viewOverview(){
   var body = document.getElementById('dvBody');
   var byProd = {};
-  S.stock.forEach(function(s){ (byProd[s.productId] = byProd[s.productId] || []).push(s); });
-  var rows = Object.keys(byProd).map(function(pid){
-    var p = productById(pid), rs = byProd[pid];
+  // only rows the distributor can actually see, belonging to distributors that still exist
+  S.stock.forEach(function(s){ if(s.visible && S.dists.has(s.distributorId) && (!S.ovDist || s.distributorId === S.ovDist)) (byProd[s.productId] = byProd[s.productId] || []).push(s); });
+  var ids = {}; Object.keys(byProd).forEach(function(k){ ids[k] = true; });
+  if(S.allProds) products().forEach(function(p){ if(p.id !== undefined && p.id !== null) ids[p.id] = true; });
+  var q = S.q.toLowerCase();
+  var rows = Object.keys(ids).map(function(pid){
+    var p = productById(pid), rs = byProd[pid] || [], x = p ? snapOf(p) : { name: (rs[0] || {}).name, size: (rs[0] || {}).size, part: (rs[0] || {}).part };
     var dist = rs.reduce(function(a, s){ return a + (Number(s.qty) || 0); }, 0);
-    var own = p ? Number(p.stock) : NaN;
-    return { pid: pid, name: p ? p.name : rs[0].name, part: p ? p.part : rs[0].part, own: own, dist: dist, rs: rs };
-  }).filter(function(r){ var q = S.q.toLowerCase(); return !q || (r.name + ' ' + r.part).toLowerCase().indexOf(q) >= 0; })
-    .sort(function(a, b){ return String(a.name).localeCompare(String(b.name)); });
-  var h = '<div style="display:flex;gap:8px;margin-bottom:10px"><input id="oQ" placeholder="Search…" value="' + esc(S.q) + '" style="flex:1"><button class="btn-admin sm outline" id="oCsv">⬇ CSV</button></div>' +
-    '<div class="ac-sub mb-2">Each distributor has his own stock row, so the same product never duplicates — totals simply add up. “Own” is your warehouse stock from Products &amp; Pricing.</div>';
+    return { pid: pid, name: x.name, size: x.size, part: x.part, own: p ? companyOf(p) : null, gone: !p, dist: dist, rs: rs };
+  }).filter(function(r){ return !q || (r.name + ' ' + r.size + ' ' + r.part).toLowerCase().indexOf(q) >= 0; })
+    .sort(function(a, b){ return String(a.name).localeCompare(String(b.name)) || String(a.size).localeCompare(String(b.size), undefined, { numeric: true }); });
+  var h = '<div style="display:flex;gap:8px;margin-bottom:6px"><select id="oDist"><option value="">All distributors</option>' + Array.from(S.dists.values()).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); }).map(function(d){ return '<option value="' + esc(d.id) + '"' + (S.ovDist === d.id ? ' selected' : '') + '>' + esc(d.name) + '</option>'; }).join('') + '</select><input id="oQ" placeholder="Search…" value="' + esc(S.q) + '" style="flex:1"><button class="btn-admin sm outline" id="oCsv">⬇ CSV</button></div>' +
+    '<div style="margin-bottom:8px"><label style="font-size:12.5px"><input type="checkbox" id="oAll"' + (S.allProds ? ' checked' : '') + '> Also list products no distributor has</label></div>' +
+    '<div class="ac-sub mb-2">One stock row per distributor and product, so nothing duplicates — totals simply add up. “Company” is your own Stock figure from Products &amp; Pricing (∞ = unlimited). Only items currently shown to a distributor are counted.</div>';
   if(!rows.length) h += '<div class="admin-empty"><div class="ae-big">Nothing assigned yet</div></div>';
-  else h += '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Product</th><th class="text-end">Own</th><th>Distributors</th><th class="text-end">Distributor total</th><th class="text-end">Grand total</th></tr></thead><tbody>' +
+  else h += '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Product</th><th class="text-end">Company</th><th>Distributors</th><th class="text-end">Distributor total</th><th class="text-end">Grand total</th></tr></thead><tbody>' +
     rows.map(function(r){
-      var own = isFinite(r.own) ? r.own : null;
-      return '<tr><td>' + esc(r.name) + '<div style="font-size:11px;color:#777">' + esc(r.part) + '</div></td><td class="text-end">' + (own === null ? '∞' : own) + '</td><td>' +
-        r.rs.filter(function(s){ return s.visible; }).map(function(s){ var d = S.dists.get(s.distributorId); return esc(d ? d.name : s.distributorId) + ': <b>' + (Number(s.qty) || 0) + '</b>'; }).join('<br>') +
-        '</td><td class="text-end"><b>' + r.dist + '</b></td><td class="text-end"><b>' + (own === null ? '∞' : own + r.dist) + '</b></td></tr>'; }).join('') + '</tbody></table></div>';
+      return '<tr><td>' + esc(r.name) + (r.size ? ' <span style="color:#555">— ' + esc(r.size) + '</span>' : '') + '<div style="font-size:11px;color:#777">' + esc(r.part) + (r.gone ? ' · <b>product deleted</b>' : '') + '</div></td><td class="text-end">' + (r.own === null ? '∞' : r.own) + '</td><td>' +
+        (r.rs.map(function(s){ var d = S.dists.get(s.distributorId); return esc(d ? d.name : s.distributorId) + ': <b>' + (Number(s.qty) || 0) + '</b>'; }).join('<br>') || '<span style="color:#999">—</span>') +
+        '</td><td class="text-end"><b>' + r.dist + '</b></td><td class="text-end"><b>' + (r.own === null ? '∞' : r.own + r.dist) + '</b></td></tr>'; }).join('') + '</tbody></table></div>';
   body.innerHTML = h;
   document.getElementById('oQ').oninput = function(e){ S.q = e.target.value; var p = e.target.selectionStart; viewOverview(); var b = document.getElementById('oQ'); b.focus(); try{ b.setSelectionRange(p, p); }catch(x){} };
+  document.getElementById('oDist').onchange = function(e){ S.ovDist = e.target.value; viewOverview(); };
+  document.getElementById('oAll').onchange = function(e){ S.allProds = e.target.checked; viewOverview(); };
   document.getElementById('oCsv').onclick = function(){
-    download('distributor-stock-' + new Date().toISOString().slice(0, 10) + '.csv',
-      [['Product', 'Part', 'Own stock', 'Distributor', 'Qty', 'Last updated']].concat(Array.prototype.concat.apply([], rows.map(function(r){
-        return r.rs.map(function(s){ var d = S.dists.get(s.distributorId); return [r.name, r.part, isFinite(r.own) ? r.own : '', d ? d.name : s.distributorId, s.qty, s.updatedAt ? new Date(s.updatedAt).toLocaleString('en-IN') : '']; }); }))));
+    var out = [['Product', 'Spec / size', 'Part', 'Company stock', 'Distributor', 'Qty', 'Last updated']];
+    rows.forEach(function(r){
+      var own = r.own === null ? 'unlimited' : r.own;
+      if(!r.rs.length) out.push([r.name, r.size, r.part, own, '', '', '']);
+      r.rs.forEach(function(s){ var d = S.dists.get(s.distributorId); out.push([r.name, r.size, r.part, own, d ? d.name : s.distributorId, s.qty, s.updatedAt ? new Date(s.updatedAt).toLocaleString('en-IN') : '']); });
+    });
+    download('distributor-stock-' + new Date().toISOString().slice(0, 10) + '.csv', out);
   };
 }
 
@@ -295,15 +380,94 @@ function approve(r){
     p = { id: API.nextProductId(), cat: 'column', name: r.name, size: r.size || '', part: r.part, mrp: Number(r.mrp) || 0, discountPct: 0, gstPct: 18, active: false, stock: 0 };
     list.push(p); API.saveProducts(list); created = true;
   }
-  var id = r.distributorId + '__' + p.id, old = S.stock.get(id);
+  var sn = snapOf(p), id = r.distributorId + '__' + p.id, old = S.stock.get(id);
   var show = old ? !!old.showPrice : !!d.defaultShowPrice;
-  var row = { id: id, distributorId: d.id, productId: p.id, name: p.name, size: p.size || '', part: p.part, visible: true, showPrice: show, qty: Number(r.qty) || 0, updatedAt: Date.now(), updatedBy: d.id };
-  if(show){ row.mrp = Number(p.mrp) || 0; row.gstPct = Number(p.gstPct) || 0; }
+  var row = { id: id, distributorId: d.id, productId: p.id, name: sn.name, size: sn.size, part: sn.part, visible: true, showPrice: show, qty: Number(r.qty) || 0, updatedAt: Date.now(), updatedBy: d.id };
+  if(show){ row.mrp = Number(p.mrp) || 0; row.gstPct = Number(p.gstPct) || 0; } else { row.mrp = FV().delete(); row.gstPct = FV().delete(); }
+  if(sees(d)) row.companyStock = companyOf(p); else row.companyStock = FV().delete();
   var batch = db().batch();
   batch.set(db().collection('distributor_stock').doc(id), row, { merge: true });      // same distributor + same product => same doc => updated, never duplicated
   batch.set(db().collection('distributor_requests').doc(r.id), { status: 'approved', productId: p.id, adminNote: created ? 'New product created' : 'Linked to existing product' }, { merge: true });
   batch.commit().then(function(){ API.logAudit('Product request approved', r.name + ' → ' + d.name + (created ? ' (new product)' : ' (existing)')); toast(created ? 'Approved — new product created (inactive, set price in Products)' : 'Approved — linked to existing product'); })
     .catch(function(e){ toast('Failed: ' + e.message); });
+}
+
+
+/* ----------------------------------------- view: who added how much stock */
+function periodStart(p){
+  var n = new Date();
+  if(p === 'today') return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  if(p === 'month') return new Date(n.getFullYear(), n.getMonth(), 1).getTime();
+  if(p === 'all') return 0;
+  return Date.now() - Number(p) * 86400000;
+}
+function viewAdded(){
+  var A = S.ad, body = document.getElementById('dvBody'), key = A.period;
+  if(A.rows === null || A.key !== key){
+    body.innerHTML = '<div class="ac-sub">Loading…</div>';
+    var since = periodStart(A.period), q = db().collection('distributor_log');
+    if(since) q = q.where('ts', '>=', since);
+    q.orderBy('ts', 'desc').limit(3000).get().then(function(s){ A.rows = s.docs.map(function(x){ return x.data(); }); A.key = key; if(tabActive() && S.view === 'added') viewAdded(); })
+      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+    return;
+  }
+  var rows = A.rows.filter(function(l){ return (A.adminToo || l.by !== 'admin') && (!A.dist || l.distributorId === A.dist); });
+  var by = {}, tot = { add: 0, red: 0, n: 0 };
+  rows.forEach(function(l){
+    var delta = (Number(l.to) || 0) - (Number(l.from) || 0);
+    if(A.onlyAdd && delta <= 0) return;
+    var g = by[l.distributorId] = by[l.distributorId] || { id: l.distributorId, n: 0, add: 0, red: 0, last: 0, prods: {} };
+    g.n++; tot.n++; g.last = Math.max(g.last, l.ts || 0);
+    if(delta > 0){ g.add += delta; tot.add += delta; } else { g.red += -delta; tot.red += -delta; }
+    var pk = String(l.part || l.name), pr = g.prods[pk] = g.prods[pk] || { name: l.name, part: l.part, n: 0, add: 0, red: 0 };
+    pr.n++; if(delta > 0) pr.add += delta; else pr.red += -delta;
+  });
+  var list = Object.keys(by).map(function(k){ return by[k]; }).sort(function(x, y){ return y.add - x.add; });
+  // distributors with no activity are still shown (so a missing update is visible)
+  if(!A.onlyAdd && !A.dist) S.dists.forEach(function(d){ if(!by[d.id]) list.push({ id: d.id, n: 0, add: 0, red: 0, last: 0, prods: {} }); });
+  var nm = function(id){ var d = S.dists.get(id); return d ? d.name : id; };
+  var sel = function(id, opts, v){ return '<select id="' + id + '">' + opts.map(function(o){ return '<option value="' + o[0] + '"' + (String(v) === String(o[0]) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; };
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">' +
+    sel('adDist', [['', 'All distributors']].concat(Array.from(S.dists.values()).map(function(d){ return [d.id, esc(d.name)]; })), A.dist) +
+    sel('adPer', [['today', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['all', 'All time']], A.period) +
+    '<button class="btn-admin sm outline" id="adCsv">⬇ CSV</button></div>' +
+    '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px">' +
+    '<label><input type="checkbox" id="adOnly"' + (A.onlyAdd ? ' checked' : '') + '> Only stock increases</label>' +
+    '<label><input type="checkbox" id="adAdm"' + (A.adminToo ? ' checked' : '') + '> Include my own (admin) edits</label>' +
+    '<label><input type="checkbox" id="adMode"' + (A.mode === 'prod' ? ' checked' : '') + '> Show by product instead of by distributor</label></div>' +
+    '<div class="ac-sub mb-2"><b>Added</b> = units the distributor increased; <b>Reduced</b> = units he decreased (sales / corrections). Built from his saved stock updates in the chosen period' + (A.rows.length >= 3000 ? ' (latest 3000 shown)' : '') + '.</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">' +
+      '<div class="dv-chip"><b style="color:#1e7b46">+' + tot.add + '</b>units added</div><div class="dv-chip"><b style="color:#b23b3b">−' + tot.red + '</b>units reduced</div><div class="dv-chip"><b>' + tot.n + '</b>updates</div></div>';
+  if(A.mode === 'prod'){
+    var pm = {};
+    Object.keys(by).forEach(function(k){ var g = by[k]; Object.keys(g.prods).forEach(function(pk){ var p = g.prods[pk], z = pm[pk] = pm[pk] || { name: p.name, part: p.part, add: 0, red: 0, who: [] }; z.add += p.add; z.red += p.red; if(p.add || p.red) z.who.push(nm(g.id) + ' +' + p.add + (p.red ? ' / −' + p.red : '')); }); });
+    var pl = Object.keys(pm).map(function(k){ return pm[k]; }).sort(function(x, y){ return y.add - x.add; });
+    h += !pl.length ? '<div class="admin-empty"><div class="ae-big">No updates in this period</div></div>' :
+      '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Product</th><th class="text-end">Added</th><th class="text-end">Reduced</th><th>By</th></tr></thead><tbody>' +
+      pl.map(function(p){ return '<tr><td>' + esc(p.name) + '<div style="font-size:11px;color:#777">' + esc(p.part) + '</div></td><td class="text-end"><b>+' + p.add + '</b></td><td class="text-end">−' + p.red + '</td><td style="font-size:11.5px">' + p.who.map(esc).join('<br>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  } else {
+    h += !list.length ? '<div class="admin-empty"><div class="ae-big">No updates in this period</div></div>' :
+      '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Distributor</th><th class="text-end">Updates</th><th class="text-end">Added</th><th class="text-end">Reduced</th><th class="text-end">Net</th><th>Last update</th></tr></thead><tbody>' +
+      list.map(function(g){
+        var open = !!S.exp[g.id] || (A.dist && A.dist === g.id), net = g.add - g.red;
+        var html = '<tr data-ex="' + esc(g.id) + '" style="cursor:pointer"><td>' + (g.n ? (open ? '▾ ' : '▸ ') : '') + '<b>' + esc(nm(g.id)) + '</b></td><td class="text-end">' + g.n + '</td><td class="text-end" style="color:#1e7b46"><b>+' + g.add + '</b></td><td class="text-end" style="color:#b23b3b">−' + g.red + '</td><td class="text-end"><b>' + (net > 0 ? '+' : '') + net + '</b></td><td>' + (g.last ? ago(g.last) : '<span style="color:#b23b3b">no update</span>') + '</td></tr>';
+        if(open) html += Object.keys(g.prods).map(function(k){ return g.prods[k]; }).sort(function(x, y){ return y.add - x.add; }).map(function(p){
+          return '<tr style="background:#faf7ee"><td style="padding-left:26px">' + esc(p.name) + ' <span style="font-size:11px;color:#777">' + esc(p.part) + '</span></td><td class="text-end">' + p.n + '</td><td class="text-end" style="color:#1e7b46">+' + p.add + '</td><td class="text-end" style="color:#b23b3b">−' + p.red + '</td><td></td><td></td></tr>'; }).join('');
+        return html; }).join('') + '</tbody></table></div><div class="ac-sub">Tap a distributor to see which products.</div>';
+  }
+  body.innerHTML = h;
+  var $$ = function(id){ return document.getElementById(id); };
+  $$('adDist').onchange = function(e){ A.dist = e.target.value; viewAdded(); };
+  $$('adPer').onchange = function(e){ A.period = e.target.value; A.rows = null; viewAdded(); };
+  $$('adOnly').onchange = function(e){ A.onlyAdd = e.target.checked; viewAdded(); };
+  $$('adAdm').onchange = function(e){ A.adminToo = e.target.checked; viewAdded(); };
+  $$('adMode').onchange = function(e){ A.mode = e.target.checked ? 'prod' : 'dist'; viewAdded(); };
+  body.querySelectorAll('[data-ex]').forEach(function(tr){ tr.onclick = function(){ var k = tr.getAttribute('data-ex'); S.exp[k] = !S.exp[k]; viewAdded(); }; });
+  $$('adCsv').onclick = function(){
+    var out = [['Distributor', 'Product', 'Part', 'Updates', 'Added', 'Reduced']];
+    Object.keys(by).forEach(function(k){ var g = by[k]; Object.keys(g.prods).forEach(function(pk){ var p = g.prods[pk]; out.push([nm(g.id), p.name, p.part, p.n, p.add, p.red]); }); });
+    download('stock-added-' + A.period + '-' + new Date().toISOString().slice(0, 10) + '.csv', out);
+  };
 }
 
 /* ----------------------------------------------------------- view: activity */
@@ -315,10 +479,11 @@ function viewLog(){
       .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
     return;
   }
-  body.innerHTML = !S.logRows.length ? '<div class="admin-empty"><div class="ae-big">No stock updates yet</div></div>' :
+  body.innerHTML = '<div style="margin-bottom:8px"><button class="btn-admin sm outline" id="lRef">↻ Refresh</button></div>' + (!S.logRows.length ? '<div class="admin-empty"><div class="ae-big">No stock updates yet</div></div>' :
     '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>When</th><th>Distributor</th><th>Product</th><th class="text-end">Change</th></tr></thead><tbody>' +
     S.logRows.map(function(l){ var d = S.dists.get(l.distributorId);
-      return '<tr><td>' + new Date(l.ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</td><td>' + esc(d ? d.name : l.distributorId) + '</td><td>' + esc(l.name) + '<div style="font-size:11px;color:#777">' + esc(l.part) + '</div></td><td class="text-end">' + l.from + ' → <b>' + l.to + '</b></td></tr>'; }).join('') + '</tbody></table></div>';
+      return '<tr><td>' + new Date(l.ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</td><td>' + esc(d ? d.name : l.distributorId) + '</td><td>' + esc(l.name) + '<div style="font-size:11px;color:#777">' + esc(l.part) + '</div></td><td class="text-end">' + l.from + ' → <b>' + l.to + '</b>' + (l.by === 'admin' ? ' <span style="font-size:10.5px;color:#777">(admin)</span>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>');
+  var rb = document.getElementById('lRef'); if(rb) rb.onclick = function(){ S.logRows = null; viewLog(); };
 }
 
 
@@ -335,9 +500,9 @@ function healthScan(){
   var orphans = [], leaks = [], drift = 0;
   S.stock.forEach(function(s){
     var p = productById(s.productId);
-    if(!p){ orphans.push(s); return; }
+    if(!p || !S.dists.has(s.distributorId)){ orphans.push(s); return; }
     if(!s.showPrice && (s.mrp !== undefined || s.gstPct !== undefined)) leaks.push(s);
-    if(s.name !== p.name || s.part !== p.part || (s.showPrice && (s.mrp !== (Number(p.mrp) || 0) || s.gstPct !== (Number(p.gstPct) || 0)))) drift++;
+    if(diffRow(s)) drift++;
   });
   var empty = Array.from(S.dists.values()).filter(function(d){ return d.isActive !== false && !stockOf(d.id).some(function(s){ return s.visible; }); });
   var oldReq = pendingReqs().filter(function(r){ return Date.now() - (r.createdAt || 0) > 3 * 86400000; });
@@ -356,25 +521,28 @@ function viewHealth(){
     card(!H.samples.length, 'Sample products still in the catalogue (' + H.samples.length + ')', H.samples.length ? 'The built-in SAMPLE items are still there: ' + names(H.samples, function(p){ return esc(p.name); }) + '. Delete them before going live.' : '') +
     card(!H.orphans.length, 'Distributor rows whose product was deleted (' + H.orphans.length + ')', H.orphans.length ? 'These rows point to products that no longer exist.' : 'No orphan rows.', '<button class="btn-admin sm maroon" id="hOrph">Remove orphan rows</button>') +
     card(!H.leaks.length, 'Hidden-price rows that still carry a price (' + H.leaks.length + ')', H.leaks.length ? 'Price is switched off for these rows but an old MRP value is still stored. Clean them so it can never be read.' : 'Hidden prices are fully removed.', '<button class="btn-admin sm" id="hLeak">Clean now</button>') +
-    card(!H.drift, 'Distributor copies out of date (' + H.drift + ')', H.drift ? 'Product name / part / MRP changed after assigning.' : 'All copies match the catalogue.', '<button class="btn-admin sm" id="hSync">Refresh now</button>') +
+    card(!H.drift, 'Distributor copies out of date (' + H.drift + ')', H.drift ? 'Name / spec / part / MRP / company stock changed after assigning (this fixes itself automatically within a minute).' : 'All copies match the catalogue.', '<button class="btn-admin sm" id="hSync">Refresh now</button>') +
     card(!H.stale.length, 'Distributors with stale stock (' + H.stale.length + ')', H.stale.length ? names(H.stale, function(d){ return esc(d.name) + ' (' + ago(lastFresh(d)) + ')'; }) + ' — use 📲 WhatsApp on the Distributors tab.' : 'Everyone confirmed stock within 7 days.') +
     card(!H.empty.length, 'Active distributors with no products (' + H.empty.length + ')', H.empty.length ? names(H.empty, function(d){ return esc(d.name); }) : '') +
     card(!H.oldReq.length, 'Requests waiting more than 3 days (' + H.oldReq.length + ')', H.oldReq.length ? names(H.oldReq, function(r){ return esc(r.name); }) : '');
   function bind(id, fn){ var b = document.getElementById(id); if(b) b.onclick = fn; }
   bind('hOrph', function(){
     if(!confirm('Delete ' + H.orphans.length + ' orphan row(s)?')) return;
-    var batch = db().batch(); H.orphans.slice(0, 400).forEach(function(s){ batch.delete(db().collection('distributor_stock').doc(s.id)); });
-    batch.commit().then(function(){ API.logAudit('Distributor data check', 'Removed ' + H.orphans.length + ' orphan rows'); toast('Removed'); });
+    commitOps(H.orphans.map(function(s){ return { ref: db().collection('distributor_stock').doc(s.id), del: true }; })).then(function(){ API.logAudit('Distributor data check', 'Removed ' + H.orphans.length + ' orphan rows'); toast('Removed'); });
   });
   bind('hLeak', function(){
-    var batch = db().batch(); H.leaks.slice(0, 400).forEach(function(s){ batch.set(db().collection('distributor_stock').doc(s.id), { mrp: FV().delete(), gstPct: FV().delete() }, { merge: true }); });
-    batch.commit().then(function(){ API.logAudit('Distributor data check', 'Cleaned hidden prices'); toast('Cleaned'); });
+    commitOps(H.leaks.map(function(s){ return { ref: db().collection('distributor_stock').doc(s.id), data: { mrp: FV().delete(), gstPct: FV().delete() } }; })).then(function(){ API.logAudit('Distributor data check', 'Cleaned hidden prices'); toast('Cleaned'); });
   });
-  bind('hSync', function(){ syncSnapshots().then(function(n){ toast(n + ' row(s) refreshed'); }); });
+  bind('hSync', function(){ S.syncing = false; syncSnapshots().then(function(n){ toast(n + ' row(s) refreshed'); }); });
 }
 
 /* ---------------------------------------------------------------- register */
 window.__acAdminTabs = window.__acAdminTabs || {};
-window.__acAdminTabs.distributors = function(){ render(); setTimeout(syncSnapshots, 1500); };
-if(CLOUD && CLOUD.enabled && CLOUD.role === 'admin') start();
+window.__acAdminTabs.distributors = function(){ render(); queueSync(1500); };
+/* product / catalog-card edits (name, spec, MRP, stock, new or removed items) reach distributors straight away */
+window.__acCatalogChanged = function(){ if(S.started) queueSync(1500); };
+if(CLOUD && CLOUD.enabled && CLOUD.role === 'admin'){
+  API = window.__acApi; start();
+  setInterval(function(){ if(S.started) syncSnapshots(); }, 60000);   // picks up stock changes made elsewhere
+}
 })();
