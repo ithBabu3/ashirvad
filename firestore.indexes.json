@@ -2,6 +2,11 @@
   "indexes": [
     { "collectionGroup": "distributor_log", "queryScope": "COLLECTION",
       "fields": [ { "fieldPath": "distributorId", "order": "ASCENDING" }, { "fieldPath": "ts", "order": "DESCENDING" } ] }
+    ,
+    { "collectionGroup": "distributor_sales", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "distributorId", "order": "ASCENDING" }, { "fieldPath": "ts", "order": "DESCENDING" } ] },
+    { "collectionGroup": "distributor_orders", "queryScope": "COLLECTION",
+      "fields": [ { "fieldPath": "distributorId", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" } ] }
   ],
   "fieldOverrides": []
 }

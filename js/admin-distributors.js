@@ -9,9 +9,21 @@
 var CLOUD = window.AC_CLOUD, API;
 var DOMAIN = (window.AC_CLOUD_OPTIONS && window.AC_CLOUD_OPTIONS.distributorEmailDomain) || 'distributor.ashirvadconnect.app';
 var STALE_MS = 7 * 86400000;
-var S = { dists: new Map(), stock: new Map(), reqs: new Map(), view: 'list', started: false, q: '', allProds: false, logRows: null, ad: { dist: '', period: '30', mode: 'dist', adminToo: false, onlyAdd: false, rows: null, key: '' }, ovDist: '', exp: {}, syncing: false, syncT: null };
+var S = { dists: new Map(), stock: new Map(), reqs: new Map(), orders: new Map(), roles: new Map(), team: new Map(), staff: null, od: { st: 'active', dist: '' }, sl: { dist: '', period: '30', mode: 'dist', rows: null, key: '' }, view: 'list', started: false, q: '', allProds: false, logRows: null, ad: { dist: '', period: '30', mode: 'dist', adminToo: false, onlyAdd: false, rows: null, key: '' }, ovDist: '', exp: {}, syncing: false, syncT: null };
 
 function noop(){}
+function RO(){ return CLOUD && CLOUD.staffRole === 'viewer'; }
+function isOwner(){ return !CLOUD || CLOUD.staffRole === 'owner' || !CLOUD.staffRole; }
+function who(){ return (CLOUD && CLOUD.staffName) || 'admin'; }
+/* a view-only login can open and filter everything but every action button is switched off (the rules block writes too) */
+(function(){ if(document.getElementById('dvCss')) return; var st = document.createElement('style'); st.id = 'dvCss';
+  st.textContent = '.dv-chip{background:#faf6ec;border:1px solid #e6dfcb;border-radius:10px;padding:6px 14px;font-size:11.5px;color:#666}.dv-chip b{display:block;font-size:17px;color:#222}';
+  document.head.appendChild(st); })();
+var RO_OK = { adCsv: 1, oCsv: 1, lRef: 1, slCsv: 1, hScan: 1 };
+function lockRO(){ main().querySelectorAll('button').forEach(function(b){ if(b.hasAttribute('data-dv') || RO_OK[b.id]) return; b.disabled = true; b.title = 'View-only login'; }); }
+function $$(id){ return document.getElementById(id); }
+function dtime(ts){ return ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
+function distName(id){ var d = S.dists.get(id); return d ? d.name : id; }
 function esc(s){ return API.esc(s); }
 function toast(m){ API.showToast(m); }
 function db(){ return CLOUD.db; }
@@ -52,7 +64,7 @@ function lastFresh(d){ return Math.max(Number(d.lastConfirmedAt) || 0, stockOf(d
 function isStale(d){ if(d.isActive === false) return false; var vis = stockOf(d.id).filter(function(s){ return s.visible; }); if(!vis.length) return false; var l = lastFresh(d); return !l || Date.now() - l > STALE_MS; }
 function updateBadge(){
   var btn = document.querySelector('.admin-tabs button[data-atab="distributors"]'); if(!btn) return;
-  var n = pendingReqs().length + Array.from(S.dists.values()).filter(isStale).length;
+  var n = pendingReqs().length + newOrders() + Array.from(S.dists.values()).filter(isStale).length;
   btn.textContent = '🚚 Distributors' + (n ? ' (' + n + ')' : '');
 }
 function waLink(d){
@@ -66,7 +78,7 @@ function productById(id){ return products().filter(function(p){ return String(p.
 /* ------------------------------------------------------------ live data */
 function start(){
   if(S.started) return; S.started = true;
-  [['distributors', S.dists], ['distributor_stock', S.stock], ['distributor_requests', S.reqs]].forEach(function(pair){
+  [['distributors', S.dists], ['distributor_stock', S.stock], ['distributor_requests', S.reqs], ['distributor_orders', S.orders], ['roles', S.roles], ['distributor_users', S.team]].forEach(function(pair){
     db().collection(pair[0]).onSnapshot(function(snap){
       snap.docChanges().forEach(function(ch){ if(ch.type === 'removed') pair[1].delete(ch.doc.id); else { var d = ch.doc.data(); d.id = ch.doc.id; pair[1].set(ch.doc.id, d); } });
       updateBadge();
@@ -76,6 +88,7 @@ function start(){
   });
 }
 function stockOf(distId){ return Array.from(S.stock.values()).filter(function(s){ return s.distributorId === distId; }); }
+function newOrders(){ return Array.from(S.orders.values()).filter(function(o){ return o.status === 'placed'; }).length; }
 function pendingReqs(){ return Array.from(S.reqs.values()).filter(function(r){ return r.status === 'pending'; }); }
 
 /* What a stock row must look like right now, given the real product and the distributor's settings.
@@ -118,11 +131,13 @@ function render(){
   }
   start();
   var pend = pendingReqs().length;
-  var nav = [['list', '🚚 Distributors'], ['overview', '📦 Stock overview'], ['requests', '📥 Requests' + (pend ? ' (' + pend + ')' : '')], ['added', '📈 Stock added'], ['log', '🕘 Activity'], ['health', '🩺 Data check']]
+  var nav = [['list', '🚚 Distributors'], ['overview', '📦 Stock overview'], ['requests', '📥 Requests' + (pend ? ' (' + pend + ')' : '')], ['orders', '📦 Orders' + (newOrders() ? ' (' + newOrders() + ')' : '')], ['sales', '🧾 Sales'], ['added', '📈 Stock added'], ['log', '🕘 Activity'], ['health', '🩺 Data check']].concat(isOwner() ? [['roles', '🔐 Roles & team']] : [])
     .map(function(v){ return '<button type="button" class="btn-admin sm ' + (S.view === v[0] ? '' : 'outline') + '" data-dv="' + v[0] + '" style="margin-right:6px">' + v[1] + '</button>'; }).join('');
-  m.innerHTML = '<div class="admin-toolbar"><h2>Distributors</h2></div><div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px">' + nav + '</div><div id="dvBody"></div>';
+  m.innerHTML = (RO() ? '<div style="background:#eef3ff;border:1px solid #c9d8ff;border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:12.5px">👁 <b>View-only login</b> — you can look at everything, but not change anything.</div>' : '') + '<div class="admin-toolbar"><h2>Distributors</h2></div><div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px">' + nav + '</div><div id="dvBody"></div>';
   m.querySelectorAll('[data-dv]').forEach(function(b){ b.onclick = function(){ S.view = b.getAttribute('data-dv'); S.logRows = null; render(); }; });
-  ({ list: viewList, overview: viewOverview, added: viewAdded, requests: viewRequests, log: viewLog, health: viewHealth })[S.view]();
+  if(RO() && !S.roObs){ S.roObs = true; new MutationObserver(function(){ if(tabActive()) lockRO(); }).observe(m, { childList: true, subtree: true }); }
+  if(S.view === 'roles' && !isOwner()) S.view = 'list';
+  ({ list: viewList, overview: viewOverview, added: viewAdded, orders: viewOrders, sales: viewSales, roles: viewRoles, requests: viewRequests, log: viewLog, health: viewHealth })[S.view]();
 }
 
 /* ------------------------------------------------------ view: distributors */
@@ -174,10 +189,10 @@ function overlay(html){
 function closeOv(){ var w = document.getElementById('distOv'); if(w) w.remove(); render(); }
 
 /* ---- add / edit distributor */
-function createLogin(username, password){
+function createLogin(username, password, domain){
   var app = CLOUD.firebase.initializeApp(window.AC_FIREBASE_CONFIG, 'dist-create-' + Date.now());
   var auth = app.auth();
-  return auth.createUserWithEmailAndPassword(username + '@' + DOMAIN, password).then(function(c){
+  return auth.createUserWithEmailAndPassword(username + '@' + (domain || DOMAIN), password).then(function(c){
     var uid = c.user.uid;
     return auth.signOut().catch(noop).then(function(){ return app.delete().catch(noop); }).then(function(){ return uid; });
   }, function(err){ return app.delete().catch(noop).then(function(){ throw err; }); });
@@ -393,6 +408,209 @@ function approve(r){
 }
 
 
+
+/* ================================================================ view: purchase orders from distributors */
+var ST_LABEL = { placed: 'Placed', accepted: 'Accepted', dispatched: 'Dispatched', delivered: 'Delivered', rejected: 'Rejected', cancelled: 'Cancelled' };
+var ST_COL = { placed: '#2b4f9e', accepted: '#8a5a00', dispatched: '#6a3fa0', delivered: '#1e7b46', rejected: '#b23b3b', cancelled: '#777777' };
+function pill(st){ var c = ST_COL[st] || '#777'; return '<span style="background:' + c + '1f;color:' + c + ';border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600">' + esc(ST_LABEL[st] || st) + '</span>'; }
+var NEXT = { placed: [['accept', 'Accept'], ['reject', 'Reject']], accepted: [['dispatch', 'Dispatch'], ['reject', 'Reject']], dispatched: [['deliver', 'Mark delivered']] };
+function viewOrders(){
+  var body = $$('dvBody'), O = S.od;
+  var rows = Array.from(S.orders.values()).filter(function(o){
+    if(O.dist && o.distributorId !== O.dist) return false;
+    return O.st === 'all' ? true : O.st === 'active' ? ['placed', 'accepted', 'dispatched'].indexOf(o.status) >= 0 : o.status === O.st;
+  }).sort(function(x, y){ return (y.createdAt || 0) - (x.createdAt || 0); });
+  var sel = function(id, opts, v){ return '<select id="' + id + '">' + opts.map(function(o){ return '<option value="' + o[0] + '"' + (v === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; };
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">' +
+    sel('orSt', [['active', 'Open orders'], ['placed', 'New (placed)'], ['accepted', 'Accepted'], ['dispatched', 'Dispatched'], ['delivered', 'Delivered'], ['rejected', 'Rejected'], ['cancelled', 'Cancelled'], ['all', 'All']], O.st) +
+    sel('orDist', [['', 'All distributors']].concat(Array.from(S.dists.values()).map(function(d){ return [d.id, esc(d.name)]; })), O.dist) + '</div>';
+  h += !rows.length ? '<div class="admin-empty"><div class="ae-big">No orders here</div></div>' : rows.map(function(o){
+    var acts = (!RO() && NEXT[o.status]) ? NEXT[o.status].map(function(x){ return '<button class="btn-admin sm' + (x[0] === 'reject' ? ' outline' : '') + '" data-oa="' + x[0] + '" data-oid="' + esc(o.id) + '" style="margin-right:6px">' + x[1] + '</button>'; }).join('') : '';
+    return '<div style="border:1px solid #e6dfcb;border-radius:10px;padding:10px 12px;margin-bottom:10px">' +
+      '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b>' + esc(o.no) + '</b><span>' + pill(o.status) + '</span></div>' +
+      '<div class="ac-sub">' + esc(distName(o.distributorId)) + ' · ' + dtime(o.createdAt) + ' · ' + (Number(o.units) || 0) + ' units' + (o.by && o.by !== o.distributorId ? ' · by ' + esc(o.by) : '') + '</div>' +
+      '<table style="width:100%;font-size:12.5px;margin:6px 0"><tbody>' + (o.lines || []).map(function(l){ return '<tr><td>' + esc(l.name) + (l.size ? ' <span style="color:#666">— ' + esc(l.size) + '</span>' : '') + ' <span style="color:#888;font-size:11px">' + esc(l.part) + '</span></td><td class="text-end"><b>' + (Number(l.qty) || 0) + '</b></td></tr>'; }).join('') + '</tbody></table>' +
+      (o.note ? '<div class="ac-sub">📝 ' + esc(o.note) + '</div>' : '') + (o.expected ? '<div class="ac-sub">Expected: <b>' + esc(o.expected) + '</b></div>' : '') +
+      '<div style="font-size:11.5px;color:#666;margin:4px 0">' + (o.history || []).map(function(x){ return esc(ST_LABEL[x.s] || x.s) + ' · ' + dtime(x.ts) + (x.by ? ' · ' + esc(x.by) : '') + (x.note ? ' — ' + esc(x.note) : ''); }).join('<br>') + '</div>' + acts + '</div>';
+  }).join('');
+  body.innerHTML = h;
+  $$('orSt').onchange = function(e){ O.st = e.target.value; viewOrders(); };
+  $$('orDist').onchange = function(e){ O.dist = e.target.value; viewOrders(); };
+  body.querySelectorAll('[data-oa]').forEach(function(b){ b.onclick = function(){ orderAction(S.orders.get(b.getAttribute('data-oid')), b.getAttribute('data-oa')); }; });
+}
+function orderAction(o, act){
+  if(!o) return;
+  var to = { accept: 'accepted', reject: 'rejected', dispatch: 'dispatched', deliver: 'delivered' }[act];
+  var w = overlay('<h5>' + esc(ST_LABEL[to]) + ' — ' + esc(o.no) + '</h5><div class="ac-sub mb-2">' + esc(distName(o.distributorId)) + ' · ' + (Number(o.units) || 0) + ' units</div>' +
+    (act === 'dispatch' ? '<label>Expected delivery date</label><input type="date" id="oExp" style="width:100%;margin-bottom:8px">' : '') +
+    (act === 'deliver' ? '<label style="display:block;margin:6px 0"><input type="checkbox" id="oAdd"' + (o.stockAdded ? ' disabled' : ' checked') + '> Add these quantities to the distributor\'s stock' + (o.stockAdded ? ' (already added)' : '') + '</label>' : '') +
+    '<label>Note for the distributor (optional)</label><textarea id="oNote" rows="2" style="width:100%"></textarea>' +
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="oNo" style="flex:1">Cancel</button><button class="btn-admin" id="oYes" style="flex:1">Confirm</button></div>');
+  $$('oNo').onclick = closeOv;
+  $$('oYes').onclick = function(){
+    var now = Date.now(), note = $$('oNote').value.trim(), exp = $$('oExp') ? $$('oExp').value : '';
+    var upd = { status: to, updatedAt: now, history: FV().arrayUnion({ s: to, ts: now, by: who(), note: note }) };
+    if(exp) upd.expected = exp; if(note) upd.adminNote = note;
+    var ops = [], miss = 0;
+    if(act === 'deliver' && $$('oAdd') && $$('oAdd').checked && !o.stockAdded){
+      (o.lines || []).forEach(function(l){
+        var row = S.stock.get(o.distributorId + '__' + l.productId), q = Number(l.qty) || 0;
+        if(!row || q <= 0){ miss++; return; }
+        var from = Number(row.qty) || 0;
+        ops.push({ ref: db().collection('distributor_stock').doc(row.id), data: { qty: FV().increment(q), updatedAt: now, updatedBy: 'admin' } });
+        ops.push({ ref: db().collection('distributor_log').doc(), merge: false, data: { distributorId: o.distributorId, productId: l.productId, name: l.name + (l.size ? ' — ' + l.size : ''), part: l.part, from: from, to: from + q, ts: now, by: 'admin', type: 'order', ref: o.no } });
+      });
+      upd.stockAdded = true;
+    }
+    ops.unshift({ ref: db().collection('distributor_orders').doc(o.id), data: upd });
+    $$('oYes').disabled = true;
+    commitOps(ops).then(function(){ API.logAudit('Distributor order ' + to, o.no + ' · ' + distName(o.distributorId)); toast(ST_LABEL[to] + (miss ? ' (' + miss + ' item(s) not on his list — stock not added for those)' : '')); closeOv(); })
+      .catch(function(e){ $$('oYes').disabled = false; toast('Failed: ' + e.message); });
+  };
+}
+
+/* ================================================================ view: sales entered by distributors */
+function viewSales(){
+  var A = S.sl, body = $$('dvBody');
+  if(A.rows === null || A.key !== A.period){
+    body.innerHTML = '<div class="ac-sub">Loading…</div>';
+    var since = periodStart(A.period), q = db().collection('distributor_sales');
+    if(since) q = q.where('ts', '>=', since);
+    q.orderBy('ts', 'desc').limit(3000).get().then(function(s){ A.rows = s.docs.map(function(x){ var o = x.data(); o.id = x.id; return o; }); A.key = A.period; if(tabActive() && S.view === 'sales') viewSales(); })
+      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+    return;
+  }
+  var by = {}, tot = { n: 0, u: 0, a: 0, v: 0 }, pm = {};
+  A.rows.forEach(function(s){
+    if(A.dist && s.distributorId !== A.dist) return;
+    var g = by[s.distributorId] = by[s.distributorId] || { id: s.distributorId, n: 0, u: 0, a: 0, v: 0, last: 0 };
+    if(s.status === 'void'){ g.v++; tot.v++; return; }
+    g.n++; g.u += Number(s.units) || 0; g.a += Number(s.amount) || 0; g.last = Math.max(g.last, s.ts || 0);
+    tot.n++; tot.u += Number(s.units) || 0; tot.a += Number(s.amount) || 0;
+    (s.lines || []).forEach(function(l){ var k = String(l.part || l.name), p = pm[k] = pm[k] || { name: l.name, size: l.size, part: l.part, u: 0, a: 0 }; p.u += Number(l.qty) || 0; p.a += (Number(l.qty) || 0) * (Number(l.rate) || 0); });
+  });
+  var list = Object.keys(by).map(function(k){ return by[k]; }).sort(function(x, y){ return y.u - x.u; });
+  var sel = function(id, opts, v){ return '<select id="' + id + '">' + opts.map(function(o){ return '<option value="' + o[0] + '"' + (String(v) === String(o[0]) ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; };
+  var h = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">' + sel('slDist', [['', 'All distributors']].concat(Array.from(S.dists.values()).map(function(d){ return [d.id, esc(d.name)]; })), A.dist) +
+    sel('slPer', [['today', 'Today'], ['7', 'Last 7 days'], ['30', 'Last 30 days'], ['month', 'This month'], ['all', 'All time']], A.period) + '<button class="btn-admin sm outline" id="slCsv">⬇ CSV</button></div>' +
+    '<div style="margin-bottom:8px"><label style="font-size:12.5px"><input type="checkbox" id="slMode"' + (A.mode === 'prod' ? ' checked' : '') + '> Show by product</label></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap"><div class="dv-chip"><b>' + tot.n + '</b>sales</div><div class="dv-chip"><b>' + tot.u + '</b>units sold</div><div class="dv-chip"><b>₹' + tot.a.toLocaleString('en-IN') + '</b>value (where rate entered)</div><div class="dv-chip"><b>' + tot.v + '</b>voided</div></div>';
+  if(A.mode === 'prod'){
+    var pl = Object.keys(pm).map(function(k){ return pm[k]; }).sort(function(x, y){ return y.u - x.u; });
+    h += !pl.length ? '<div class="admin-empty"><div class="ae-big">No sales in this period</div></div>' : '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Product</th><th class="text-end">Units sold</th><th class="text-end">Value</th></tr></thead><tbody>' +
+      pl.map(function(p){ return '<tr><td>' + esc(p.name) + (p.size ? ' — ' + esc(p.size) : '') + '<div style="font-size:11px;color:#777">' + esc(p.part) + '</div></td><td class="text-end"><b>' + p.u + '</b></td><td class="text-end">' + (p.a ? '₹' + p.a.toLocaleString('en-IN') : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  } else {
+    h += !list.length ? '<div class="admin-empty"><div class="ae-big">No sales in this period</div></div>' : '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Distributor</th><th class="text-end">Sales</th><th class="text-end">Units</th><th class="text-end">Value</th><th class="text-end">Voided</th><th>Last sale</th></tr></thead><tbody>' +
+      list.map(function(g){ return '<tr><td><b>' + esc(distName(g.id)) + '</b></td><td class="text-end">' + g.n + '</td><td class="text-end"><b>' + g.u + '</b></td><td class="text-end">' + (g.a ? '₹' + g.a.toLocaleString('en-IN') : '—') + '</td><td class="text-end">' + g.v + '</td><td>' + (g.last ? ago(g.last) : '—') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  body.innerHTML = h;
+  $$('slDist').onchange = function(e){ A.dist = e.target.value; viewSales(); };
+  $$('slPer').onchange = function(e){ A.period = e.target.value; A.rows = null; viewSales(); };
+  $$('slMode').onchange = function(e){ A.mode = e.target.checked ? 'prod' : 'dist'; viewSales(); };
+  $$('slCsv').onclick = function(){
+    var out = [['When', 'Distributor', 'Customer', 'Product', 'Part', 'Qty', 'Rate', 'Status', 'Entered by']];
+    A.rows.forEach(function(s){ if(A.dist && s.distributorId !== A.dist) return; (s.lines || []).forEach(function(l){ out.push([new Date(s.ts).toLocaleString('en-IN'), distName(s.distributorId), s.customer || '', l.name + (l.size ? ' — ' + l.size : ''), l.part, l.qty, l.rate || '', s.status, s.by || '']); }); });
+    download('distributor-sales-' + A.period + '.csv', out);
+  };
+}
+
+/* ================================================================ view: roles & team (owner only) */
+var PERMS = [
+  { k: 'stock', label: 'Stock list', opts: [['view', 'View only'], ['edit', 'View + update quantities']] },
+  { k: 'sales', label: 'Sales entry', opts: [['none', 'No access'], ['add', 'Record sales'], ['manage', 'Record + void sales']] },
+  { k: 'orders', label: 'Purchase orders', opts: [['none', 'No access'], ['view', 'See orders'], ['place', 'Place + cancel orders']] },
+  { k: 'history', label: 'Stock history', opts: [['none', 'No access'], ['view', 'See history']] },
+  { k: 'price', label: 'See MRP', opts: [['none', 'No'], ['view', 'Yes']] },
+  { k: 'requests', label: 'Request new products', opts: [['none', 'No'], ['add', 'Yes']] }
+];
+var DEFAULT_ROLES = [
+  { name: 'Manager', perms: { stock: 'edit', sales: 'manage', orders: 'place', history: 'view', price: 'view', requests: 'add' } },
+  { name: 'Storekeeper', perms: { stock: 'edit', sales: 'none', orders: 'place', history: 'view', price: 'none', requests: 'none' } },
+  { name: 'Salesman', perms: { stock: 'view', sales: 'add', orders: 'none', history: 'none', price: 'view', requests: 'none' } },
+  { name: 'Viewer', perms: { stock: 'view', sales: 'none', orders: 'view', history: 'view', price: 'none', requests: 'none' } }
+];
+function roleSummary(p){ p = p || {}; return PERMS.map(function(d){ var o = d.opts.filter(function(x){ return x[0] === (p[d.k] || d.opts[0][0]); })[0]; return d.label + ': ' + (o ? o[1] : '—'); }).join(' · '); }
+function staffDomain(){ return (CLOUD.options && CLOUD.options.adminEmailDomain) || 'admin.ashirvadconnect.app'; }
+function viewRoles(){
+  var body = $$('dvBody');
+  if(S.staff === null){
+    body.innerHTML = '<div class="ac-sub">Loading…</div>';
+    db().collection('admins').get().then(function(s){ S.staff = s.docs.map(function(x){ var o = x.data(); o.uid = x.id; return o; }); if(tabActive() && S.view === 'roles') viewRoles(); })
+      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+    return;
+  }
+  var roleOpts = function(sel){ return Array.from(S.roles.values()).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); }).map(function(r){ return '<option value="' + esc(r.id) + '"' + (sel === r.id ? ' selected' : '') + '>' + esc(r.name) + '</option>'; }).join(''); };
+  var h = '<h6 style="margin:4px 0">Staff logins (admin console)</h6><div class="ac-sub mb-2"><b>Manager</b> can change everything except this page. <b>Viewer</b> can look at everything but cannot change or save anything. The original admin is the <b>Owner</b>.</div>' +
+    '<button class="btn-admin sm" id="stAdd" style="margin-bottom:8px">+ Add staff login</button><div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Name</th><th>Login</th><th>Role</th><th></th></tr></thead><tbody>' +
+    S.staff.map(function(u){
+      var own = !u.role || u.role === 'owner';
+      return '<tr><td>' + esc(u.name || u.username || '') + '</td><td>' + esc(u.username || '') + '</td><td>' + (own ? '<b>Owner</b>' : '<select data-strole="' + esc(u.uid) + '"><option value="manager"' + (u.role === 'manager' ? ' selected' : '') + '>Manager</option><option value="viewer"' + (u.role === 'viewer' ? ' selected' : '') + '>Viewer</option></select>') + '</td><td>' + (own ? '' : '<button class="btn-admin sm outline" data-stdel="' + esc(u.uid) + '">Remove</button>') + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+    '<h6 style="margin:18px 0 4px">Distributor roles</h6><div class="ac-sub mb-2">Roles decide what a distributor\'s team members can do in the distributor portal. The distributor\'s own login always has full access.</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"><button class="btn-admin sm" id="rlAdd">+ New role</button>' + (S.roles.size ? '' : '<button class="btn-admin sm outline" id="rlDef">Add default roles (Manager, Storekeeper, Salesman, Viewer)</button>') + '</div>' +
+    (S.roles.size ? '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><tbody>' + Array.from(S.roles.values()).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); }).map(function(r){
+      var used = Array.from(S.team.values()).filter(function(t){ return t.roleId === r.id; }).length;
+      return '<tr><td><b>' + esc(r.name) + '</b><div style="font-size:11px;color:#666">' + esc(roleSummary(r.perms)) + '</div></td><td>' + used + ' member(s)</td><td style="white-space:nowrap"><button class="btn-admin sm outline" data-rled="' + esc(r.id) + '">Edit</button> <button class="btn-admin sm outline" data-rldel="' + esc(r.id) + '">Delete</button></td></tr>'; }).join('') + '</tbody></table></div>' : '') +
+    '<h6 style="margin:18px 0 4px">Distributor team members</h6><div class="ac-sub mb-2">Extra logins for a distributor\'s own people (storekeeper, salesman…). They sign in on the same distributor page with their own ID and password.</div>' +
+    '<button class="btn-admin sm" id="tmAdd" style="margin-bottom:8px"' + (S.roles.size && S.dists.size ? '' : ' disabled') + '>+ Add team member</button>' + (S.roles.size ? '' : '<span class="ac-sub"> Create a role first.</span>') +
+    (S.team.size ? '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>Distributor</th><th>Member</th><th>Role</th><th>Active</th><th></th></tr></thead><tbody>' + Array.from(S.team.values()).sort(function(x, y){ return distName(x.distributorId).localeCompare(distName(y.distributorId)); }).map(function(t){
+      return '<tr><td>' + esc(distName(t.distributorId)) + '</td><td>' + esc(t.name || '') + '<div style="font-size:11px;color:#666">' + esc(t.id) + '</div></td><td><select data-tmrole="' + esc(t.id) + '">' + roleOpts(t.roleId) + '</select></td><td><input type="checkbox" data-tmact="' + esc(t.id) + '"' + (t.isActive !== false ? ' checked' : '') + '></td><td><button class="btn-admin sm outline" data-tmdel="' + esc(t.id) + '">Remove</button></td></tr>'; }).join('') + '</tbody></table></div>' : '');
+  body.innerHTML = h;
+  var q = function(sel, fn){ body.querySelectorAll(sel).forEach(fn); };
+  $$('stAdd').onclick = openStaffForm;
+  $$('rlAdd').onclick = function(){ openRoleForm(null); };
+  if($$('rlDef')) $$('rlDef').onclick = function(){ commitOps(DEFAULT_ROLES.map(function(r){ return { ref: db().collection('roles').doc('r_' + slug(r.name)), data: { name: r.name, scope: 'distributor', perms: r.perms, updatedAt: Date.now() } }; })).then(function(){ toast('Default roles added'); }).catch(function(e){ toast(e.message); }); };
+  $$('tmAdd').onclick = openTeamForm;
+  q('[data-strole]', function(el){ el.onchange = function(){ db().collection('admins').doc(el.getAttribute('data-strole')).update({ role: el.value }).then(function(){ S.staff = null; toast('Role updated'); viewRoles(); }).catch(function(e){ toast(e.message); }); }; });
+  q('[data-stdel]', function(el){ el.onclick = function(){ if(!confirm('Remove this staff login? He will no longer be able to open the admin console.')) return; db().collection('admins').doc(el.getAttribute('data-stdel')).delete().then(function(){ API.logAudit('Staff login removed', el.getAttribute('data-stdel')); S.staff = null; viewRoles(); }).catch(function(e){ toast(e.message); }); }; });
+  q('[data-rled]', function(el){ el.onclick = function(){ openRoleForm(S.roles.get(el.getAttribute('data-rled'))); }; });
+  q('[data-rldel]', function(el){ el.onclick = function(){ var id = el.getAttribute('data-rldel'); if(Array.from(S.team.values()).some(function(t){ return t.roleId === id; })){ toast('This role is still used by team members'); return; } if(confirm('Delete this role?')) db().collection('roles').doc(id).delete().catch(function(e){ toast(e.message); }); }; });
+  q('[data-tmrole]', function(el){ el.onchange = function(){ db().collection('distributor_users').doc(el.getAttribute('data-tmrole')).update({ roleId: el.value }).then(function(){ toast('Role updated'); }).catch(function(e){ toast(e.message); }); }; });
+  q('[data-tmact]', function(el){ el.onchange = function(){ db().collection('distributor_users').doc(el.getAttribute('data-tmact')).update({ isActive: el.checked }).catch(function(e){ toast(e.message); }); }; });
+  q('[data-tmdel]', function(el){ el.onclick = function(){ if(confirm('Remove this team member? His login stops working.')) db().collection('distributor_users').doc(el.getAttribute('data-tmdel')).delete().then(function(){ API.logAudit('Distributor team member removed', el.getAttribute('data-tmdel')); }).catch(function(e){ toast(e.message); }); }; });
+}
+function openRoleForm(r){
+  var w = overlay('<h5>' + (r ? 'Edit role' : 'New role') + '</h5><label>Role name</label><input id="rlName" value="' + esc(r ? r.name : '') + '" style="width:100%;margin-bottom:8px">' +
+    PERMS.map(function(d){ var cur = r && r.perms ? r.perms[d.k] : d.opts[0][0]; return '<label style="display:block;margin-top:6px">' + d.label + '</label><select data-pk="' + d.k + '" style="width:100%">' + d.opts.map(function(o){ return '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>'; }).join('') +
+    '<div class="ac-sub" style="margin-top:8px">“See MRP” hides prices in the portal screen for this role (the distributor\'s own login is not affected).</div>' +
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="rlNo" style="flex:1">Cancel</button><button class="btn-admin" id="rlYes" style="flex:1">Save</button></div>');
+  $$('rlNo').onclick = closeOv;
+  $$('rlYes').onclick = function(){
+    var name = $$('rlName').value.trim(); if(!name){ toast('Enter a role name'); return; }
+    var perms = {}; w.querySelectorAll('[data-pk]').forEach(function(s){ perms[s.getAttribute('data-pk')] = s.value; });
+    var id = r ? r.id : 'r_' + slug(name) + '_' + Math.random().toString(36).slice(2, 6);
+    db().collection('roles').doc(id).set({ name: name, scope: 'distributor', perms: perms, updatedAt: Date.now() }, { merge: true }).then(function(){ API.logAudit('Distributor role saved', name); closeOv(); }).catch(function(e){ toast(e.message); });
+  };
+}
+function openStaffForm(){
+  overlay('<h5>Add staff login</h5><label>Name</label><input id="sfName" style="width:100%;margin-bottom:6px"><label>Login (username)</label><input id="sfUser" style="width:100%;margin-bottom:6px" autocapitalize="none"><label>Password (min 6)</label><input id="sfPass" style="width:100%;margin-bottom:6px"><label>Role</label><select id="sfRole" style="width:100%"><option value="manager">Manager — can change everything except roles & team</option><option value="viewer">Viewer — view only</option></select>' +
+    '<div class="ac-sub" style="margin-top:6px">They sign in on the normal admin login with this username.</div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="sfNo" style="flex:1">Cancel</button><button class="btn-admin" id="sfYes" style="flex:1">Create</button></div>');
+  $$('sfNo').onclick = closeOv;
+  $$('sfYes').onclick = function(){
+    var name = $$('sfName').value.trim(), user = slug($$('sfUser').value), pass = $$('sfPass').value, role = $$('sfRole').value;
+    if(!name || !user || pass.length < 6){ toast('Fill name, username and a password of 6+ characters'); return; }
+    $$('sfYes').disabled = true;
+    createLogin(user, pass, staffDomain()).then(function(uid){ return db().collection('admins').doc(uid).set({ username: user, email: user + '@' + staffDomain(), name: name, role: role, createdAt: new Date().toISOString() }); })
+      .then(function(){ API.logAudit('Staff login created', user + ' (' + role + ')'); S.staff = null; closeOv(); toast('Staff login created'); viewRoles(); })
+      .catch(function(e){ $$('sfYes').disabled = false; toast(/email-already-in-use/.test(e.code || '') ? 'That username is already taken' : e.message); });
+  };
+}
+function openTeamForm(){
+  var dOpts = Array.from(S.dists.values()).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); }).map(function(d){ return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join('');
+  var rOpts = Array.from(S.roles.values()).map(function(r){ return '<option value="' + esc(r.id) + '">' + esc(r.name) + '</option>'; }).join('');
+  overlay('<h5>Add distributor team member</h5><label>Distributor</label><select id="tfDist" style="width:100%;margin-bottom:6px">' + dOpts + '</select><label>Name</label><input id="tfName" style="width:100%;margin-bottom:6px"><label>Login ID</label><input id="tfUser" style="width:100%;margin-bottom:6px" autocapitalize="none"><label>Password (min 6)</label><input id="tfPass" style="width:100%;margin-bottom:6px"><label>Role</label><select id="tfRole" style="width:100%">' + rOpts + '</select>' +
+    '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="tfNo" style="flex:1">Cancel</button><button class="btn-admin" id="tfYes" style="flex:1">Create</button></div>');
+  $$('tfNo').onclick = closeOv;
+  $$('tfYes').onclick = function(){
+    var name = $$('tfName').value.trim(), user = slug($$('tfUser').value), pass = $$('tfPass').value;
+    if(!name || !user || pass.length < 6){ toast('Fill name, login ID and a password of 6+ characters'); return; }
+    if(S.dists.has(user) || S.team.has(user)){ toast('That login ID is already used'); return; }
+    $$('tfYes').disabled = true;
+    createLogin(user, pass, DOMAIN).then(function(){ return db().collection('distributor_users').doc(user).set({ distributorId: $$('tfDist').value, roleId: $$('tfRole').value, name: name, isActive: true, createdAt: Date.now() }); })
+      .then(function(){ API.logAudit('Distributor team member created', user + ' → ' + $$('tfDist').value); closeOv(); toast('Team member created'); })
+      .catch(function(e){ $$('tfYes').disabled = false; toast(/email-already-in-use/.test(e.code || '') ? 'That login ID is already taken' : e.message); });
+  };
+}
+
 /* ----------------------------------------- view: who added how much stock */
 function periodStart(p){
   var n = new Date();
@@ -482,7 +700,7 @@ function viewLog(){
   body.innerHTML = '<div style="margin-bottom:8px"><button class="btn-admin sm outline" id="lRef">↻ Refresh</button></div>' + (!S.logRows.length ? '<div class="admin-empty"><div class="ae-big">No stock updates yet</div></div>' :
     '<div style="overflow:auto"><table class="table table-sm" style="font-size:12.5px"><thead><tr><th>When</th><th>Distributor</th><th>Product</th><th class="text-end">Change</th></tr></thead><tbody>' +
     S.logRows.map(function(l){ var d = S.dists.get(l.distributorId);
-      return '<tr><td>' + new Date(l.ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</td><td>' + esc(d ? d.name : l.distributorId) + '</td><td>' + esc(l.name) + '<div style="font-size:11px;color:#777">' + esc(l.part) + '</div></td><td class="text-end">' + l.from + ' → <b>' + l.to + '</b>' + (l.by === 'admin' ? ' <span style="font-size:10.5px;color:#777">(admin)</span>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>');
+      return '<tr><td>' + new Date(l.ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</td><td>' + esc(d ? d.name : l.distributorId) + '</td><td>' + esc(l.name) + '<div style="font-size:11px;color:#777">' + esc(l.part) + '</div></td><td class="text-end">' + l.from + ' → <b>' + l.to + '</b>' + (l.type ? ' <span style="font-size:10.5px;color:#777">(' + esc(l.type) + (l.ref ? ' ' + esc(l.ref) : '') + ')</span>' : '') + (l.by && l.by !== 'admin' ? ' <span style="font-size:10.5px;color:#777">· ' + esc(l.by) + '</span>' : '') + (l.by === 'admin' ? ' <span style="font-size:10.5px;color:#777">(admin)</span>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>');
   var rb = document.getElementById('lRef'); if(rb) rb.onclick = function(){ S.logRows = null; viewLog(); };
 }
 

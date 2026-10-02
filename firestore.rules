@@ -14,12 +14,26 @@ service cloud.firestore {
 
     function isDistributor() { return request.auth != null && request.auth.token.email != null
                                       && request.auth.token.email.matches('.*@distributor[.]ashirvadconnect[.]app'); }
-    function myDistId()      { return request.auth.token.email.split('@')[0]; }
+    // A distributor login is either the distributor itself (login id == distributors/<id>) or a TEAM member
+    // (document distributor_users/<login id> -> distributorId + roleId). Team permissions come from /roles/<roleId>.
+    function loginId()       { return request.auth.token.email.split('@')[0]; }
+    function isTeam()        { return exists(/databases/$(database)/documents/distributor_users/$(loginId())); }
+    function teamDoc()       { return get(/databases/$(database)/documents/distributor_users/$(loginId())).data; }
+    function myDistId()      { return isTeam() ? teamDoc().distributorId : loginId(); }
+    function dActive()       { return !isTeam() || teamDoc().get('isActive', true) == true; }
+    // dAllow('sales', ['add','manage']) : owner login always passes; a team member needs one of those levels in his role
+    function dAllow(k, levels) { return !isTeam() || (teamDoc().get('isActive', true) == true
+                                   && get(/databases/$(database)/documents/roles/$(teamDoc().roleId)).data.perms.get(k, 'none') in levels); }
     function distDoc()       { return get(/databases/$(database)/documents/distributors/$(myDistId())).data; }
     function signedIn()  { return request.auth != null; }
     // distributors are signed in too, but must NEVER read the catalogue (it holds dealer prices + warehouse stock)
     function staffOrDealer() { return signedIn() && !isDistributor(); }
+    // staff = any login with a document in /admins. role: absent/'owner' = full access (the original admin),
+    // 'manager' = everything except staff / roles / team management, 'viewer' = read-only.
     function isAdmin()   { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function staffRole() { return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('role', 'owner'); }
+    function isOwner()   { return isAdmin() && staffRole() == 'owner'; }
+    function canWrite()  { return isAdmin() && staffRole() != 'viewer'; }
     function isDealer()  { return signedIn() && request.auth.token.email != null
                                   && request.auth.token.email.matches('.*@dealer[.]ashirvadconnect[.]app'); }
     function myPhone()   { return request.auth.token.email.split('@')[0]; }
@@ -28,26 +42,36 @@ service cloud.firestore {
 
     // ---- who is an admin (read-only from the app; only the setup script can add admins) ----
     match /admins/{uid} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if false;
+      allow read: if signedIn() && (request.auth.uid == uid || isOwner());
+      allow write: if isOwner() && uid != request.auth.uid;      // the owner manages staff logins (never his own)
+    }
+
+    // ---- roles for distributor team members (created by the owner) ----
+    match /roles/{id} {
+      allow read: if isAdmin() || (isDistributor() && isTeam() && id == teamDoc().roleId);
+      allow write: if isOwner();
+    }
+    match /distributor_users/{id} {
+      allow read: if isAdmin() || (isDistributor() && loginId() == id);
+      allow write: if isOwner();
     }
 
     // ---- shared catalogue & configuration: every signed-in user reads, only admin writes ----
-    match /products/{id}               { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /spec_groups/{id}            { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /catalog_categories/{id}     { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /catalog_subcategories/{id}  { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /offers/{id}                 { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /banners/{id}                { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /calc_rules/{id}             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /broadcasts/{id}             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
-    match /config/settings             { allow read: if staffOrDealer(); allow write: if isAdmin(); }
+    match /products/{id}               { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /spec_groups/{id}            { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /catalog_categories/{id}     { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /catalog_subcategories/{id}  { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /offers/{id}                 { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /banners/{id}                { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /calc_rules/{id}             { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /broadcasts/{id}             { allow read: if staffOrDealer(); allow write: if canWrite(); }
+    match /config/settings             { allow read: if staffOrDealer(); allow write: if canWrite(); }
 
     // ---- running invoice counter: anyone signed in may raise it, never lower it ----
     match /config/invoice_seq {
       allow read: if staffOrDealer();
       allow create: if staffOrDealer() && request.resource.data.n is number;
-      allow update: if isAdmin() || (staffOrDealer() && request.resource.data.n is number
+      allow update: if canWrite() || (staffOrDealer() && request.resource.data.n is number
                                      && request.resource.data.n >= resource.data.n);
     }
 
@@ -55,67 +79,68 @@ service cloud.firestore {
     match /dealers/{gst} {
       allow read: if isAdmin() || mine(resource.data);
       // a dealer may register a profile for themselves — but never grant themselves a tier / discount / prices
-      allow create: if isAdmin() || (isDealer()
+      allow create: if canWrite() || (isDealer()
                         && request.resource.data.accountKey == myPhone()
                         && request.resource.data.keys().hasOnly(['business','gst','phone','address','contactPerson',
                               'email','deliveryAddress','tier','notes','standingDiscountPct','accountKey'])
                         && request.resource.data.get('tier', 'Standard') == 'Standard'
                         && request.resource.data.get('standingDiscountPct', 0) == 0);
-      allow update: if isAdmin() || (mine(resource.data)
+      allow update: if canWrite() || (mine(resource.data)
                         && request.resource.data.accountKey == resource.data.accountKey
                         && !changes(['tier','standingDiscountPct','priceOverrides','creditLimit','isActive',
                                      'blockReason','notes','autoStatusRule','gst']));
-      allow delete: if isAdmin();
+      allow delete: if canWrite();
     }
 
     // ---- login accounts (phone -> list of linked GST profiles) ----
     match /accounts/{phone} {
       allow read: if isAdmin() || (isDealer() && phone == myPhone());
-      allow create, update: if isAdmin() || (isDealer() && phone == myPhone()
+      allow create, update: if canWrite() || (isDealer() && phone == myPhone()
                                              && request.resource.data.keys().hasOnly(['gsts']));
-      allow delete: if isAdmin();
+      allow delete: if canWrite();
     }
 
     // ---- orders ----
     match /orders/{id} {
       allow read: if isAdmin() || mine(resource.data);
-      allow create: if isAdmin() || (mine(request.resource.data)
+      allow create: if canWrite() || (mine(request.resource.data)
                         && exists(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst))
                         && get(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst)).data.accountKey == myPhone());
       // a dealer can cancel / mark seen / trigger an invoice number — but never change what was ordered or the price
-      allow update: if isAdmin() || (mine(resource.data)
+      allow update: if canWrite() || (mine(resource.data)
                         && request.resource.data.accountKey == resource.data.accountKey
                         && !changes(['items','total','deliveryCharge','dealerGst','id','discount','createdAt'])
                         && !(changes(['invoiceNo']) && 'invoiceNo' in resource.data));
-      allow delete: if isAdmin();
+      allow delete: if canWrite();
     }
 
     // ---- payments / credit ledger: dealers may read their own, only admin writes ----
     match /payments/{id} {
       allow read: if isAdmin() || mine(resource.data);
-      allow write: if isAdmin();
+      allow write: if canWrite();
     }
 
     // ---- "notify me when back in stock" requests ----
     match /stock_notify/{id} {
       allow read: if isAdmin() || mine(resource.data);
-      allow create: if isAdmin() || mine(request.resource.data);
-      allow update: if isAdmin() || (mine(resource.data) && request.resource.data.accountKey == resource.data.accountKey);
-      allow delete: if isAdmin() || mine(resource.data);
+      allow create: if canWrite() || mine(request.resource.data);
+      allow update: if canWrite() || (mine(resource.data) && request.resource.data.accountKey == resource.data.accountKey);
+      allow delete: if canWrite() || mine(resource.data);
     }
 
     // ---- audit trail: anyone signed in can add a line, only admin can read / change it ----
     match /audit_log/{id} {
       allow create: if staffOrDealer();
-      allow read, update, delete: if isAdmin();
+      allow read: if isAdmin();
+      allow update, delete: if isOwner();
     }
 
         // ---- distributors ----
     match /distributors/{id} {
-      allow read: if isAdmin() || (isDistributor() && id == myDistId());
-      allow create, delete: if isAdmin();
+      allow read: if isAdmin() || (isDistributor() && id == myDistId() && dActive());
+      allow create, delete: if canWrite();
       // a distributor may only tap "all up to date" (lastConfirmedAt) on his own doc
-      allow update: if isAdmin() || (isDistributor() && id == myDistId()
+      allow update: if canWrite() || (isDistributor() && id == myDistId() && dAllow('stock', ['edit'])
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastConfirmedAt'])
             && request.resource.data.lastConfirmedAt is number);
     }
@@ -123,15 +148,19 @@ service cloud.firestore {
     // one doc per (distributor, product) => same product never duplicates.
     // admin controls visible / showPrice / price snapshot; distributor may ONLY change qty.
     match /distributor_stock/{id} {
-      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+      allow read: if isAdmin() || (isDistributor() && dActive() && resource.data.distributorId == myDistId()
                                    && resource.data.visible == true);
-      allow create, delete: if isAdmin();
-      allow update: if isAdmin() || (isDistributor()
+      allow create, delete: if canWrite();
+      allow update: if canWrite() || (isDistributor()
             && resource.data.distributorId == myDistId()
             && resource.data.visible == true
             && distDoc().isActive == true
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['qty', 'updatedAt', 'updatedBy'])
-            && request.resource.data.qty is number && request.resource.data.qty >= 0);
+            && request.resource.data.qty is number && request.resource.data.qty >= 0
+            // who may change a quantity: stock editors; sales managers (also restore stock on void);
+            // sales clerks (only REDUCE stock, i.e. record a sale)
+            && (dAllow('stock', ['edit']) || dAllow('sales', ['manage'])
+                || (dAllow('sales', ['add']) && request.resource.data.qty <= resource.data.qty)));
     }
 
     // new-product requests (only if admin switched "can upload" on for that distributor)
@@ -141,21 +170,47 @@ service cloud.firestore {
           && d.keys().hasOnly(['id','distributorId','name','size','part','partKey','mrp','qty','note','status','createdAt'])
           && d.qty is number && d.qty >= 0;
       }
-      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
-      allow create: if isAdmin() || (isDistributor() && reqOk(request.resource.data)
+      allow read: if isAdmin() || (isDistributor() && dActive() && resource.data.distributorId == myDistId());
+      allow create: if canWrite() || (isDistributor() && reqOk(request.resource.data) && dAllow('requests', ['add'])
                         && distDoc().canUpload == true && distDoc().isActive == true);
-      allow update: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+      allow update: if canWrite() || (isDistributor() && resource.data.distributorId == myDistId()
                         && resource.data.status in ['pending', 'rejected'] && reqOk(request.resource.data));
-      allow delete: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId()
+      allow delete: if canWrite() || (isDistributor() && resource.data.distributorId == myDistId()
                         && resource.data.status in ['pending', 'rejected']);
     }
 
     // stock-change history
     match /distributor_log/{id} {
-      allow read: if isAdmin() || (isDistributor() && resource.data.distributorId == myDistId());
-      allow create: if isAdmin() || (isDistributor() && request.resource.data.distributorId == myDistId()
-                    && request.resource.data.keys().hasOnly(['distributorId','productId','name','part','from','to','ts']));
+      allow read: if isAdmin() || (isDistributor() && dAllow('history', ['view']) && resource.data.distributorId == myDistId());
+      allow create: if canWrite() || (isDistributor() && request.resource.data.distributorId == myDistId() && dActive()
+                    && request.resource.data.keys().hasOnly(['distributorId','productId','name','part','from','to','ts','type','ref','by']));
       allow update, delete: if false;
+    }
+
+    // ---- sales entry: one document per sale; stock is reduced in the SAME batch (see js/distributor.js) ----
+    match /distributor_sales/{id} {
+      allow read: if isAdmin() || (isDistributor() && dAllow('sales', ['add', 'manage']) && resource.data.distributorId == myDistId());
+      allow create: if canWrite() || (isDistributor() && dAllow('sales', ['add', 'manage']) && dActive()
+                        && request.resource.data.distributorId == myDistId() && request.resource.data.status == 'ok'
+                        && request.resource.data.lines.size() > 0 && request.resource.data.lines.size() <= 100);
+      // a sale can only be voided (never edited), and only by a role with "manage"
+      allow update: if canWrite() || (isDistributor() && dAllow('sales', ['manage']) && resource.data.distributorId == myDistId()
+                        && resource.data.status == 'ok' && request.resource.data.status == 'void'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voidedAt', 'voidedBy']));
+      allow delete: if isOwner();
+    }
+
+    // ---- purchase orders from a distributor to the company ----
+    match /distributor_orders/{id} {
+      allow read: if isAdmin() || (isDistributor() && dAllow('orders', ['view', 'place']) && resource.data.distributorId == myDistId());
+      allow create: if canWrite() || (isDistributor() && dAllow('orders', ['place']) && dActive()
+                        && request.resource.data.distributorId == myDistId() && request.resource.data.status == 'placed'
+                        && request.resource.data.lines.size() > 0 && request.resource.data.lines.size() <= 100);
+      // the distributor may only cancel an order that is still "placed"; the company moves it through the other statuses
+      allow update: if canWrite() || (isDistributor() && dAllow('orders', ['place']) && resource.data.distributorId == myDistId()
+                        && resource.data.status == 'placed' && request.resource.data.status == 'cancelled'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'history']));
+      allow delete: if isOwner();
     }
 
   }

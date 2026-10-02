@@ -21,7 +21,7 @@ var cfg = window.AC_FIREBASE_CONFIG || {};
 var opt = Object.assign({ dealerEmailDomain:'dealer.ashirvadconnect.app', adminEmailDomain:'admin.ashirvadconnect.app', sdkVersion:'10.12.2' }, window.AC_CLOUD_OPTIONS || {});
 var enabled = !!(cfg.apiKey && cfg.projectId && !/PASTE|YOUR_|XXXX/i.test(String(cfg.apiKey) + String(cfg.projectId)));
 
-var CLOUD = window.AC_CLOUD = { enabled: enabled, role: 'none', phone: null, uid: null, options: opt };
+var CLOUD = window.AC_CLOUD = { enabled: enabled, role: 'none', staffRole: 'owner', staffName: '', phone: null, uid: null, options: opt };
 
 var thisScript = document.currentScript;
 var APP_SRC = thisScript ? thisScript.src.replace(/cloud\/firebase-boot\.js/, 'app.js') : 'js/app.js';
@@ -201,9 +201,14 @@ function ref(bucket, id){
   if(cfg.kind === 'doc'){ var p = cfg.path.split('/'); return db.collection(p[0]).doc(p[1]); }
   return db.collection(cfg.coll).doc(id);
 }
+var _voT = 0;
+function viewOnlyNotice(){ if(Date.now() - _voT < 4000) return; _voT = Date.now(); try{ toast('👁 View-only login — changes are not saved'); }catch(e){} }
 function canWrite(bucket){
   if(!CLOUD.writesEnabled) return false;
-  if(CLOUD.role === 'admin') return true;
+  if(CLOUD.role === 'admin'){
+    if(CLOUD.staffRole === 'viewer'){ viewOnlyNotice(); return false; }   // view-only staff login: nothing is saved
+    return true;
+  }
   return CLOUD.role === 'dealer' && !!bucket.cfg.dealerWrite;
 }
 function scheduleFlush(key){
@@ -539,7 +544,12 @@ function boot(){
       CLOUD.uid = user.uid;
       if(email.slice(-(opt.adminEmailDomain.length + 1)) === '@' + opt.adminEmailDomain){
         return db.collection('admins').doc(user.uid).get().then(function(d){
-          if(d.exists) return finish('admin');
+          if(d.exists){
+            var ad = d.data() || {};
+            CLOUD.staffRole = ad.role === 'manager' || ad.role === 'viewer' ? ad.role : 'owner';   // older admin documents have no role = owner
+            CLOUD.staffName = ad.name || ad.username || '';
+            return finish('admin');
+          }
           return auth.signOut().then(function(){ return finish('none'); });
         });
       }
@@ -552,8 +562,15 @@ function boot(){
     .then(function(){ hideOverlay(); })
     .catch(fatal);
 }
+function roleBadge(){
+  if(CLOUD.role !== 'admin' || CLOUD.staffRole === 'owner' || document.getElementById('acRoleBadge')) return;
+  var d = document.createElement('div'); d.id = 'acRoleBadge';
+  d.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:9999;background:#2b4f9e;color:#fff;border-radius:99px;padding:4px 12px;font-size:12px;opacity:.92;pointer-events:none';
+  d.textContent = CLOUD.staffRole === 'viewer' ? '👁 View-only login' : '🛠 Manager login';
+  (document.body || document.documentElement).appendChild(d);
+}
 function finish(role){
-  CLOUD.role = role;
+  CLOUD.role = role; roleBadge();
   var ls = rawLocal();
   if(role !== 'admin') ls.removeItem('ac_admin_session');
   else if(!ls.getItem('ac_admin_session')) ls.setItem('ac_admin_session', '1');
