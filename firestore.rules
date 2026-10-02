@@ -32,7 +32,7 @@ service cloud.firestore {
     // 'manager' = everything except staff / roles / team management, 'viewer' = read-only.
     function isAdmin()   { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
     function staffRole() { return get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('role', 'owner'); }
-    function isOwner()   { return isAdmin() && staffRole() == 'owner'; }
+    function isOwner()   { return isAdmin() && !(staffRole() in ['manager', 'viewer']); }
     function canWrite()  { return isAdmin() && staffRole() != 'viewer'; }
     function isDealer()  { return signedIn() && request.auth.token.email != null
                                   && request.auth.token.email.matches('.*@dealer[.]ashirvadconnect[.]app'); }

@@ -60,3 +60,18 @@ built-in admin password in `js/app.js` applies — testing only.
   "only increases" toggle, by-distributor / by-product toggle, expandable product detail, CSV. Overview also has a distributor filter.
 - Distributor portal: My history tab, sort, "＋Recv" (add received units), clickable Low/Out chips, total units, share low-stock list.
 - **Deploy:** `firebase deploy --only firestore,hosting` (rules + the new composite index for the history queries).
+
+## v1.7.0 — roles, offline, sales, purchase orders
+- **Staff roles** (Distributors → 🔐 Roles & team, owner only): *Manager* (everything except roles/team) and *Viewer* (read-only; nothing is saved).
+  The original admin is the Owner. Enforced in `firestore.rules` (`canWrite()` / `isOwner()`), not just in the screens.
+- **Distributor roles & team logins**: owner creates roles (stock / sales / orders / history / MRP / requests levels), then adds team members
+  (storekeeper, salesman…) to a distributor. They log in on `/distributor/` with their own ID. Collections: `roles`, `distributor_users`.
+- **Offline**: distributor page works without internet (Firestore offline cache + `distributor/sw.js`); changes queue and sync automatically.
+- **Sales entry**: one batch = sale record + stock reduction + history (increments, so offline devices merge correctly). Void restores stock.
+- **Purchase orders**: distributor cart → order → admin Accept / Dispatch / Deliver (optionally adds the quantities to his stock) / Reject; distributor tracks status.
+- Admin → Distributors has new tabs: 📦 Orders, 🧾 Sales, 🔐 Roles & team.
+- **Deploy:** `firebase deploy --only firestore,hosting` (rules + 2 new indexes — indexes take a few minutes to build).
+
+## v1.8.0
+- Distributors → Products & price: filter by **category**, tick a whole category (or a card) to show it, and set
+  **"Always include new items from these categories"** (new items appear automatically; items you hide stay hidden).

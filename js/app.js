@@ -7653,6 +7653,7 @@ window.__acApi = {
   esc: esc, showToast: showToast, logAudit: logAudit,
   getProducts: function(){ return PRODUCTS; },
   getGroups: function(){ return SPEC_GROUPS; },
+  getCategories: function(){ return CATALOG_CATEGORIES; },
   saveProducts: saveProducts, nextProductId: nextProductId,
   /* The EXACT item as the admin sees it: for a catalog-card item, name = card title and size = ALL of the
      item's field values (e.g. 2½" · Std class), plus card / category info so lists can be grouped. */
@@ -7664,10 +7665,13 @@ window.__acApi = {
         var vals = v.values || {};
         var spec = (g.fields||[]).map(function(f){ return String(vals[f.id] == null ? '' : vals[f.id]).trim(); }).filter(Boolean).join(' · ');
         return { name: g.title, size: spec || p.size || '', gid: g.id, gtitle: g.title,
+                 catId: g.categoryId || '', catName: g.categoryId ? catalogCatName(g.categoryId) : 'Uncategorised',
+                 subId: g.subCategoryId || '', subName: g.subCategoryId ? catalogSubName(g.subCategoryId) : '',
                  cat: catalogCatName(g.categoryId) + (g.subCategoryId ? ' › ' + catalogSubName(g.subCategoryId) : '') };
       }
     }
-    return { name: p.name, size: p.size || '', gid: null, gtitle: '', cat: '' };
+    return { name: p.name, size: p.size || '', gid: null, gtitle: '', catId: p.cat || '', catName: p.cat ? catalogCatName(p.cat) : 'Uncategorised',
+             subId: '', subName: '', cat: p.cat ? catalogCatName(p.cat) : '' };
   }
 };
 

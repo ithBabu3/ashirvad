@@ -19,7 +19,7 @@ function who(){ return (CLOUD && CLOUD.staffName) || 'admin'; }
 (function(){ if(document.getElementById('dvCss')) return; var st = document.createElement('style'); st.id = 'dvCss';
   st.textContent = '.dv-chip{background:#faf6ec;border:1px solid #e6dfcb;border-radius:10px;padding:6px 14px;font-size:11.5px;color:#666}.dv-chip b{display:block;font-size:17px;color:#222}';
   document.head.appendChild(st); })();
-var RO_OK = { adCsv: 1, oCsv: 1, lRef: 1, slCsv: 1, hScan: 1 };
+var RO_OK = { adCsv: 1, oCsv: 1, lRef: 1, slCsv: 1, hScan: 1, rulesBtn: 1, fbChk: 1 };
 function lockRO(){ main().querySelectorAll('button').forEach(function(b){ if(b.hasAttribute('data-dv') || RO_OK[b.id]) return; b.disabled = true; b.title = 'View-only login'; }); }
 function $$(id){ return document.getElementById(id); }
 function dtime(ts){ return ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'; }
@@ -41,6 +41,7 @@ function download(name, rows){
 }
 function products(){ return API.getProducts(); }
 /* Exact name / spec / part of an item. Catalog-card items carry ALL of their spec values (e.g. 2½" · Std class), not just the first one. */
+function catLabel(id){ var c = (API && API.getCategories ? API.getCategories() : []).filter(function(x){ return x.id === id; })[0]; return c ? c.name : (id || 'Uncategorised'); }
 function snapOf(p){
   var x = (API && API.describe) ? API.describe(p) : { name: p.name, size: p.size };
   return { name: String(x.name || ''), size: String(x.size || ''), part: String(p.part || '') };
@@ -57,7 +58,12 @@ function commitOps(ops){
       ch.forEach(function(o){ if(o.del) b.delete(o.ref); else b.set(o.ref, o.data, { merge: o.merge !== false }); });
       return b.commit();
     });
-  }, Promise.resolve()).then(function(){ return ops.length; });
+  }, Promise.resolve()).then(function(){ return ops.length; }, function(e){ throw friendly(e); });
+}
+/* "Missing or insufficient permissions" almost always means the Firestore rules in Firebase are older than this code */
+function friendly(e){
+  if(e && e.code === 'permission-denied') e.message = 'Permission denied by Firebase. Publish the latest rules (firebase deploy --only firestore) and check you are signed in as Owner/Manager, not a view-only login.';
+  return e;
 }
 /* Newest sign that a distributor's stock is current: a qty change OR his "stock is up to date" tap. */
 function lastFresh(d){ return Math.max(Number(d.lastConfirmedAt) || 0, stockOf(d.id).reduce(function(m, s){ return Math.max(m, s.updatedAt || 0); }, 0)); }
@@ -84,7 +90,7 @@ function start(){
       updateBadge();
       queueSync(3000);
       if(tabActive() && !busy()) render();
-    }, function(e){ console.warn('[distributors]', pair[0], e); });
+    }, function(e){ console.warn('[distributors]', pair[0], e); if(e && e.code === 'permission-denied' && !S.warnedRules){ S.warnedRules = true; toast('⚠ Firebase rules are out of date — run: firebase deploy --only firestore'); } });
   });
 }
 function stockOf(distId){ return Array.from(S.stock.values()).filter(function(s){ return s.distributorId === distId; }); }
@@ -113,8 +119,22 @@ function diffRow(s){
 /* Keeps every distributor's copy (name, spec, part, MRP, company stock) in step with the real catalogue.
    Runs when the tab opens, when products/cards are saved, when distributor data arrives and once a minute. */
 function syncSnapshots(){
-  if(!S.started || S.syncing || !API || !S.stock.size) return Promise.resolve(0);
+  var hasAuto = Array.from(S.dists.values()).some(function(d){ return d.autoCats && d.autoCats.length; });
+  if(!S.started || S.syncing || !API || (!S.stock.size && !hasAuto)) return Promise.resolve(0);
   var ops = [];
+  // "Always include new items from these categories": create the missing rows (never touches a row that exists, even a hidden one)
+  S.dists.forEach(function(d){
+    if(!d.autoCats || !d.autoCats.length || d.isActive === false) return;
+    products().forEach(function(p){
+      if(p.id === undefined || p.id === null || (!p.isCatalogVariant && p.active === false)) return;
+      var x = API.describe(p); if(d.autoCats.indexOf(x.catId || '') < 0) return;
+      var id = d.id + '__' + p.id; if(S.stock.has(id)) return;
+      var sn = snapOf(p), row = { id: id, distributorId: d.id, productId: p.id, name: sn.name, size: sn.size, part: sn.part, visible: true, showPrice: !!d.defaultShowPrice };
+      if(d.defaultShowPrice){ row.mrp = Number(p.mrp) || 0; row.gstPct = Number(p.gstPct) || 0; }
+      if(sees(d)) row.companyStock = companyOf(p);
+      ops.push({ ref: db().collection('distributor_stock').doc(id), data: row });     // no qty: his count starts at 0 and nothing can be overwritten
+    });
+  });
   S.stock.forEach(function(s, id){ var u = diffRow(s); if(u) ops.push({ ref: db().collection('distributor_stock').doc(id), data: u }); });
   if(!ops.length) return Promise.resolve(0);
   S.syncing = true;
@@ -152,7 +172,7 @@ function viewList(){
     var low = vis.filter(function(s){ return Number(s.qty) <= (Number(d.lowStockAt) || 10); }).length;
     h += '<div class="admin-card"><div class="ac-title">' + esc(d.name) + ' <span style="font-weight:400;font-size:12px">(' + esc(d.id) + ')</span> ' +
       (d.isActive === false ? '<span class="low-stock-pill" style="background:#fbdede;color:#a12626">Inactive</span>' : '<span class="low-stock-pill" style="background:#dff3e6;color:#1f7a3f">Active</span>') + '</div>' +
-      '<div class="ac-sub">' + esc(d.phone || '') + (d.city ? ' · ' + esc(d.city) : '') + ' · Upload products: <b>' + (d.canUpload ? 'Allowed' : 'Off') + '</b> · New products show price: <b>' + (d.defaultShowPrice ? 'Yes' : 'No') + '</b> · He sees: <b>' + (sees(d) ? 'company stock + his own' : 'only his own stock') + '</b></div>' +
+      '<div class="ac-sub">' + esc(d.phone || '') + (d.city ? ' · ' + esc(d.city) : '') + ' · Upload products: <b>' + (d.canUpload ? 'Allowed' : 'Off') + '</b> · New products show price: <b>' + (d.defaultShowPrice ? 'Yes' : 'No') + '</b> · He sees: <b>' + (sees(d) ? 'company stock + his own' : 'only his own stock') + '</b>' + (d.autoCats && d.autoCats.length ? ' · Auto-includes: <b>' + d.autoCats.map(function(c){ return esc(catLabel(c)); }).join(', ') + '</b>' : '') + '</div>' +
       (d.notice ? '<div class="ac-sub">📌 Notice: ' + esc(d.notice) + '</div>' : '') +
       '<div class="ac-sub">' + vis.length + ' visible product(s) · ' + low + ' low/out · stock confirmed ' + ago(last) + (stale ? ' <span class="low-stock-pill">⚠ stale</span>' : '') + '</div>' +
       '<div class="ac-actions"><button class="btn-admin sm" data-prod="' + esc(d.id) + '">Products &amp; price</button>' +
@@ -175,6 +195,7 @@ function viewList(){
     var ops = [{ ref: db().collection('distributors').doc(d.id), del: true }];
     stockOf(d.id).forEach(function(s){ ops.push({ ref: db().collection('distributor_stock').doc(s.id), del: true }); });
     Array.from(S.reqs.values()).filter(function(r){ return r.distributorId === d.id; }).forEach(function(r){ ops.push({ ref: db().collection('distributor_requests').doc(r.id), del: true }); });
+    if(isOwner()) Array.from(S.team.values()).filter(function(t){ return t.distributorId === d.id; }).forEach(function(t){ ops.push({ ref: db().collection('distributor_users').doc(t.id), del: true }); });
     commitOps(ops).then(function(){ API.logAudit('Distributor deleted', d.name); toast('Deleted'); }).catch(function(e){ toast(e.message); });
   }; });
 }
@@ -246,36 +267,47 @@ function openAssign(distId){
   // every item with its EXACT description; catalog-card items are grouped under their card
   var list = products().filter(function(p){ return p.id !== undefined && p.id !== null; }).map(function(p){ return { p: p, x: API.describe(p) }; });
   list.sort(function(a, b){
+    var cc = String(a.x.catName).localeCompare(String(b.x.catName)); if(cc) return cc;
     var ga = a.x.gid ? 1 : 0, gb = b.x.gid ? 1 : 0; if(ga !== gb) return ga - gb;
     var c = (a.x.cat + '|' + a.x.gtitle).localeCompare(b.x.cat + '|' + b.x.gtitle); if(c) return c;
     return String(a.x.gid ? a.x.size : a.x.name).localeCompare(String(b.x.gid ? b.x.size : b.x.name), undefined, { numeric: true });
   });
+  var cats = {}; list.forEach(function(r){ var k = r.x.catId || ''; cats[k] = cats[k] || { id: k, name: r.x.catName || 'Uncategorised', n: 0 }; cats[k].n++; });
+  (API.getCategories ? API.getCategories() : []).forEach(function(c){ if(!cats[c.id]) cats[c.id] = { id: c.id, name: c.name, n: 0 }; });
+  var catList = Object.keys(cats).map(function(k){ return cats[k]; }).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); });
+  var catF = '', autoSel = (d.autoCats || []).slice();
   var cur = {};   // productId -> { show, price, qty ('' = leave as is), had, oldQty }
   list.forEach(function(r){ var s = S.stock.get(distId + '__' + r.p.id);
     cur[r.p.id] = { show: !!(s && s.visible), price: !!(s && s.showPrice), had: !!s, oldQty: s ? (Number(s.qty) || 0) : 0, qty: s ? String(Number(s.qty) || 0) : '' }; });
   var w = overlay('<h5>' + esc(d.name) + ' — products &amp; price</h5>' +
     '<div class="ac-sub mb-2">Tick <b>Show</b> to put an item on this distributor\'s page (tick a card\'s box to show all its items). Tick <b>Price</b> to let him see the MRP (never discounts or dealer prices). <b>His stock</b> is his current quantity — type an opening figure if you already know it; he can change it later. Unticking Show hides an item but keeps his number.</div>' +
-    '<input id="aQ" placeholder="Search name / spec / part / category…" style="width:100%;margin-bottom:8px">' +
+    '<div style="display:flex;gap:8px;margin-bottom:8px"><select id="aCat" style="flex:0 0 42%"><option value="">All categories</option>' + catList.map(function(c){ return '<option value="' + esc(c.id) + '">' + esc(c.name) + ' (' + c.n + ')</option>'; }).join('') + '</select><input id="aQ" placeholder="Search name / spec / part…" style="flex:1"></div>' +
+    '<div style="margin:0 0 8px;padding:8px;border:1px dashed #d9cfa8;border-radius:8px;font-size:12.5px"><b>⚡ Always include new items from:</b><div style="margin-top:4px">' + catList.map(function(c){ return '<label style="margin:0 12px 2px 0;white-space:nowrap"><input type="checkbox" data-auto="' + esc(c.id) + '"' + (autoSel.indexOf(c.id) >= 0 ? ' checked' : '') + '> ' + esc(c.name) + '</label>'; }).join('') + '</div><div class="ac-sub" style="margin-top:4px">Items added later to a ticked category appear on his page automatically (stock 0). An item you untick below stays hidden.</div></div>' +
     '<div style="margin-bottom:8px;display:flex;gap:6px;flex-wrap:wrap"><button class="btn-admin sm outline" id="aShowAll">Show all listed</button><button class="btn-admin sm outline" id="aHideAll">Hide all listed</button><button class="btn-admin sm outline" id="aPriceOn">Price on (listed)</button><button class="btn-admin sm outline" id="aPriceOff">Price off (listed)</button></div>' +
     '<div id="aList" style="max-height:48vh;overflow:auto;border:1px solid #eee;border-radius:8px"></div>' +
     '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn-admin outline" id="aCancel" style="flex:1">Cancel</button><button class="btn-admin" id="aSave" style="flex:1">Save</button></div>');
   function listed(){
     var q = w.querySelector('#aQ').value.toLowerCase().trim();
-    return list.filter(function(r){ return !q || (r.x.name + ' ' + r.x.size + ' ' + r.p.part + ' ' + r.x.cat).toLowerCase().indexOf(q) >= 0; });
+    return list.filter(function(r){ return (!catF || (r.x.catId || '') === catF) && (!q || (r.x.name + ' ' + r.x.size + ' ' + r.p.part + ' ' + r.x.cat).toLowerCase().indexOf(q) >= 0); });
   }
+  function keyOf(r){ return r.x.gid ? 'c' + r.x.gid : 'r' + (r.x.catId || ''); }
   function paint(){
-    var box = w.querySelector('#aList'), top = box.scrollTop, rows = listed(), html = '', lastG = null;
+    var box = w.querySelector('#aList'), top = box.scrollTop, rows = listed(), html = '', lastG = null, lastC = null;
     rows.forEach(function(r){
-      var p = r.p, c = cur[p.id], key = r.x.gid ? 'c' + r.x.gid : 'reg';
+      var p = r.p, c = cur[p.id], key = keyOf(r), cat = r.x.catId || '';
+      if(cat !== lastC){
+        lastC = cat; lastG = null;
+        var inC = rows.filter(function(z){ return (z.x.catId || '') === cat; });
+        html += '<tr style="background:#efe6c9"><td colspan="4" style="padding:7px"><label style="margin:0;font-weight:700"><input type="checkbox" data-c="' + esc(cat) + '"' + (inC.every(function(z){ return cur[z.p.id].show; }) ? ' checked' : '') + '> 🗂 ' + esc(r.x.catName || 'Uncategorised') + ' <span style="font-weight:400;color:#666;font-size:11px">· ' + inC.length + ' item(s) — tick to show the whole category</span></label></td></tr>';
+      }
       if(key !== lastG){
         lastG = key;
-        var inG = rows.filter(function(z){ return (z.x.gid ? 'c' + z.x.gid : 'reg') === key; });
-        var all = inG.every(function(z){ return cur[z.p.id].show; });
-        html += '<tr style="background:#faf6ec"><td colspan="4" style="padding:6px"><label style="margin:0;font-weight:600"><input type="checkbox" data-g="' + key + '"' + (all ? ' checked' : '') + '> ' +
-          (r.x.gid ? '📇 ' + esc(r.x.gtitle) + ' <span style="font-weight:400;color:#777;font-size:11px">· ' + esc(r.x.cat) + ' · ' + inG.length + ' item(s)</span>' : 'Regular products') + '</label></td></tr>';
+        var inG = rows.filter(function(z){ return keyOf(z) === key; });
+        html += '<tr style="background:#faf6ec"><td colspan="4" style="padding:6px 6px 6px 18px"><label style="margin:0;font-weight:600"><input type="checkbox" data-g="' + key + '"' + (inG.every(function(z){ return cur[z.p.id].show; }) ? ' checked' : '') + '> ' +
+          (r.x.gid ? '📇 ' + esc(r.x.gtitle) + ' <span style="font-weight:400;color:#777;font-size:11px">· ' + (r.x.subName ? esc(r.x.subName) + ' · ' : '') + inG.length + ' item(s)</span>' : 'Regular products') + '</label></td></tr>';
       }
       var own = companyOf(p);
-      html += '<tr style="border-top:1px solid #f0ead8"><td style="padding:6px">' + esc(r.x.gid ? (r.x.size || r.x.name) : r.x.name) +
+      html += '<tr style="border-top:1px solid #f0ead8"><td style="padding:6px 6px 6px 28px">' + esc(r.x.gid ? (r.x.size || r.x.name) : r.x.name) +
         '<div style="font-size:11px;color:#777">' + (r.x.gid ? '' : (r.x.size ? esc(r.x.size) + ' · ' : '')) + esc(p.part) + (Number(p.mrp) ? ' · MRP ' + p.mrp : '') + ' · company stock ' + (own === null ? '∞' : own) + (p.active === false && !p.isCatalogVariant ? ' · <b>inactive</b>' : '') + '</div></td>' +
         '<td style="text-align:center"><input type="checkbox" data-s="' + p.id + '"' + (c.show ? ' checked' : '') + '></td>' +
         '<td style="text-align:center"><input type="checkbox" data-p="' + p.id + '"' + (c.price ? ' checked' : '') + (c.show ? '' : ' disabled') + '></td>' +
@@ -287,12 +319,15 @@ function openAssign(distId){
   }
   paint();
   w.querySelector('#aQ').oninput = paint;
+  w.querySelector('#aCat').onchange = function(e){ catF = e.target.value; paint(); };
+  w.onchange = function(e){ var ak = e.target.getAttribute && e.target.getAttribute('data-auto'); if(ak === null || ak === undefined) return; var i = autoSel.indexOf(ak); if(e.target.checked && i < 0) autoSel.push(ak); if(!e.target.checked && i >= 0) autoSel.splice(i, 1); };
   function setShow(id, on){ var c = cur[id]; c.show = on; if(on && !c.had && d.defaultShowPrice) c.price = true; if(!on) c.price = false; }
   w.querySelector('#aList').onchange = function(e){
-    var t = e.target, sId = t.getAttribute('data-s'), pId = t.getAttribute('data-p'), gKey = t.getAttribute('data-g');
+    var t = e.target, sId = t.getAttribute('data-s'), pId = t.getAttribute('data-p'), gKey = t.getAttribute('data-g'), cKey = t.getAttribute('data-c');
     if(sId){ setShow(sId, t.checked); paint(); }
     else if(pId){ cur[pId].price = t.checked; }
-    else if(gKey){ listed().filter(function(r){ return (r.x.gid ? 'c' + r.x.gid : 'reg') === gKey; }).forEach(function(r){ setShow(r.p.id, t.checked); }); paint(); }
+    else if(cKey !== null){ listed().filter(function(r){ return (r.x.catId || '') === cKey; }).forEach(function(r){ setShow(r.p.id, t.checked); }); paint(); }
+    else if(gKey){ listed().filter(function(r){ return keyOf(r) === gKey; }).forEach(function(r){ setShow(r.p.id, t.checked); }); paint(); }
   };
   w.querySelector('#aList').oninput = function(e){ var q = e.target.getAttribute('data-q'); if(q) cur[q].qty = e.target.value; };
   function bulk(key, val){ listed().forEach(function(r){ var c = cur[r.p.id]; if(key === 'show') setShow(r.p.id, val); else { c.price = val; if(val) c.show = true; } }); paint(); }
@@ -320,8 +355,10 @@ function openAssign(distId){
       if(qtyChanged) ops.push({ ref: db().collection('distributor_log').doc(), merge: false, data: { distributorId: distId, productId: p.id, name: sn.name + (sn.size ? ' — ' + sn.size : ''), part: sn.part, from: old ? (Number(old.qty) || 0) : 0, to: wantQty, ts: now, by: 'admin' } });
       n++;
     });
+    var acNew = autoSel.slice().sort(), acOld = (d.autoCats || []).slice().sort();
+    if(JSON.stringify(acNew) !== JSON.stringify(acOld)){ ops.push({ ref: db().collection('distributors').doc(distId), data: { autoCats: acNew } }); n++; }
     var btn = w.querySelector('#aSave'); btn.disabled = true;
-    (ops.length ? commitOps(ops) : Promise.resolve()).then(function(){ if(n) API.logAudit('Distributor products updated', d.name + ': ' + n + ' change(s)'); toast(n ? 'Saved (' + n + ' change' + (n > 1 ? 's' : '') + ')' : 'No changes'); closeOv(); })
+    (ops.length ? commitOps(ops) : Promise.resolve()).then(function(){ if(n) API.logAudit('Distributor products updated', d.name + ': ' + n + ' change(s)'); toast(n ? 'Saved (' + n + ' change' + (n > 1 ? 's' : '') + ')' : 'No changes'); closeOv(); queueSync(800); })
       .catch(function(e){ btn.disabled = false; toast('Failed: ' + e.message); });
   };
 }
@@ -410,6 +447,29 @@ function approve(r){
 
 
 /* ================================================================ view: purchase orders from distributors */
+/* a load failed: say WHICH collection and what to do (almost always: the online rules are older than the app) */
+function showFail(body, e){
+  var coll = { added: 'distributor_log', sales: 'distributor_sales', roles: 'admins' }[S.view] || S.view;
+  var denied = e && e.code === 'permission-denied';
+  body.innerHTML = '<div class="ac-sub" style="color:#b23b3b"><b>Could not load ' + esc(coll) + '</b> — ' + esc((e && e.message) || e) + '</div>' +
+    (denied ? '<div class="ac-sub" style="margin-top:8px">Firebase refused this read. The usual reason: the Firestore <b>rules online are older</b> than this app. Publish them with <code>firebase deploy --only firestore</code> (or paste <code>firestore.rules</code> into Firebase console → Firestore Database → Rules → Publish). A <b>view-only</b> or <b>manager</b> login also cannot open Roles &amp; team.</div><button class="btn-admin sm" id="fbChk" style="margin-top:8px">🔐 Check which parts are blocked</button>' : '');
+  var b = document.getElementById('fbChk'); if(b) b.onclick = function(){ S.view = 'health'; render(); setTimeout(rulesCheck, 60); };
+}
+var RULE_COLLS = ['distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'roles', 'distributor_users', 'admins'];
+function rulesCheck(){
+  var box = document.getElementById('rulesOut'); if(!box) return;
+  box.innerHTML = '<div class="ac-sub">Checking…</div>';
+  Promise.all(RULE_COLLS.map(function(c){
+    return db().collection(c).limit(1).get().then(function(){ return [c, 'ok', '']; }, function(e){ return [c, e && e.code === 'permission-denied' ? 'denied' : 'error', (e && e.message) || '']; });
+  })).then(function(rows){
+    var bad = rows.filter(function(r){ return r[1] !== 'ok'; }).length;
+    box.innerHTML = '<div class="ac-sub mb-2">Signed in as <b>' + esc(who()) + '</b> · role <b>' + esc((CLOUD && CLOUD.staffRole) || 'owner') + '</b></div><table class="table table-sm" style="font-size:12.5px"><tbody>' + rows.map(function(r){
+      var ownerOnly = (r[0] === 'admins' || r[0] === 'roles' || r[0] === 'distributor_users') ? ' <span style="color:#888">(admin only)</span>' : '';
+      return '<tr><td>' + esc(r[0]) + ownerOnly + '</td><td>' + (r[1] === 'ok' ? '✅ allowed' : r[1] === 'denied' ? '⛔ blocked by rules' : '⚠ ' + esc(r[2])) + '</td></tr>'; }).join('') + '</tbody></table>' +
+      (bad ? '<div class="ac-sub" style="color:#b23b3b">' + bad + ' blocked. Publish the latest rules: <code>firebase deploy --only firestore</code>, then refresh this page and check again.</div>' : '<div class="ac-sub" style="color:#1e7b46">All distributor collections are readable — the rules are up to date.</div>');
+  });
+}
+
 var ST_LABEL = { placed: 'Placed', accepted: 'Accepted', dispatched: 'Dispatched', delivered: 'Delivered', rejected: 'Rejected', cancelled: 'Cancelled' };
 var ST_COL = { placed: '#2b4f9e', accepted: '#8a5a00', dispatched: '#6a3fa0', delivered: '#1e7b46', rejected: '#b23b3b', cancelled: '#777777' };
 function pill(st){ var c = ST_COL[st] || '#777'; return '<span style="background:' + c + '1f;color:' + c + ';border-radius:99px;padding:1px 9px;font-size:11px;font-weight:600">' + esc(ST_LABEL[st] || st) + '</span>'; }
@@ -477,7 +537,7 @@ function viewSales(){
     var since = periodStart(A.period), q = db().collection('distributor_sales');
     if(since) q = q.where('ts', '>=', since);
     q.orderBy('ts', 'desc').limit(3000).get().then(function(s){ A.rows = s.docs.map(function(x){ var o = x.data(); o.id = x.id; return o; }); A.key = A.period; if(tabActive() && S.view === 'sales') viewSales(); })
-      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+      .catch(function(e){ showFail(body, e); });
     return;
   }
   var by = {}, tot = { n: 0, u: 0, a: 0, v: 0 }, pm = {};
@@ -536,7 +596,7 @@ function viewRoles(){
   if(S.staff === null){
     body.innerHTML = '<div class="ac-sub">Loading…</div>';
     db().collection('admins').get().then(function(s){ S.staff = s.docs.map(function(x){ var o = x.data(); o.uid = x.id; return o; }); if(tabActive() && S.view === 'roles') viewRoles(); })
-      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+      .catch(function(e){ showFail(body, e); });
     return;
   }
   var roleOpts = function(sel){ return Array.from(S.roles.values()).sort(function(x, y){ return String(x.name).localeCompare(String(y.name)); }).map(function(r){ return '<option value="' + esc(r.id) + '"' + (sel === r.id ? ' selected' : '') + '>' + esc(r.name) + '</option>'; }).join(''); };
@@ -626,7 +686,7 @@ function viewAdded(){
     var since = periodStart(A.period), q = db().collection('distributor_log');
     if(since) q = q.where('ts', '>=', since);
     q.orderBy('ts', 'desc').limit(3000).get().then(function(s){ A.rows = s.docs.map(function(x){ return x.data(); }); A.key = key; if(tabActive() && S.view === 'added') viewAdded(); })
-      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+      .catch(function(e){ showFail(body, e); });
     return;
   }
   var rows = A.rows.filter(function(l){ return (A.adminToo || l.by !== 'admin') && (!A.dist || l.distributorId === A.dist); });
@@ -694,7 +754,7 @@ function viewLog(){
   if(S.logRows === null){
     body.innerHTML = '<div class="ac-sub">Loading…</div>';
     db().collection('distributor_log').orderBy('ts', 'desc').limit(150).get().then(function(s){ S.logRows = s.docs.map(function(x){ return x.data(); }); if(tabActive() && S.view === 'log') viewLog(); })
-      .catch(function(e){ body.innerHTML = '<div class="ac-sub">Could not load: ' + esc(e.message) + '</div>'; });
+      .catch(function(e){ showFail(body, e); });
     return;
   }
   body.innerHTML = '<div style="margin-bottom:8px"><button class="btn-admin sm outline" id="lRef">↻ Refresh</button></div>' + (!S.logRows.length ? '<div class="admin-empty"><div class="ae-big">No stock updates yet</div></div>' :
@@ -733,6 +793,7 @@ function viewHealth(){
   }
   var names = function(a, f){ return a.slice(0, 6).map(f).join(', ') + (a.length > 6 ? ' … +' + (a.length - 6) + ' more' : ''); };
   body.innerHTML =
+    '<div class="admin-card"><div class="ac-title">🔐 Firebase access check</div><div class="ac-sub">Shows which distributor collections your login can read — use it when a screen says “Missing or insufficient permissions”.</div><div class="ac-actions"><button class="btn-admin sm" id="rulesBtn">Run check</button></div><div id="rulesOut" style="margin-top:8px"></div></div>' +
     '<div class="ac-sub mb-2">Checks your catalogue and distributor data for problems that would break part-code matching, stock totals or price hiding.</div>' +
     card(!H.dup.length, 'Duplicate part codes (' + H.dup.length + ')', H.dup.length ? 'Two products share a part code, so uploads and sheet imports cannot tell them apart: ' + names(H.dup, function(g){ return esc(g[0].part) + ' (' + g.map(function(p){ return esc(p.name); }).join(' / ') + ')'; }) + '. Give each a unique part code in Products &amp; Pricing.' : 'Every product has a unique part code.') +
     card(!H.noPart.length, 'Products without a part code (' + H.noPart.length + ')', H.noPart.length ? names(H.noPart, function(p){ return esc(p.name); }) : '') +
@@ -751,6 +812,7 @@ function viewHealth(){
   bind('hLeak', function(){
     commitOps(H.leaks.map(function(s){ return { ref: db().collection('distributor_stock').doc(s.id), data: { mrp: FV().delete(), gstPct: FV().delete() } }; })).then(function(){ API.logAudit('Distributor data check', 'Cleaned hidden prices'); toast('Cleaned'); });
   });
+  var rb = document.getElementById('rulesBtn'); if(rb) rb.onclick = rulesCheck;
   bind('hSync', function(){ S.syncing = false; syncSnapshots().then(function(n){ toast(n + ' row(s) refreshed'); }); });
 }
 

@@ -97,7 +97,11 @@ auth.onAuthStateChanged(function(user){
   var mail = String(user.email || '').toLowerCase();
   if(mail.slice(-(DOMAIN.length + 1)) !== '@' + DOMAIN){ $('loginErr').textContent = 'This login is not a distributor account.'; return auth.signOut(); }
   loginId = mail.split('@')[0];
-  var read = function(ref){ return ref.get().catch(function(){ return ref.get({ source: 'cache' }); }); };
+  // online: ask the server. Only when the device is really offline fall back to the saved copy; any other error is shown as it is.
+  var read = function(ref){ return ref.get().catch(function(ex){
+    if(ex && (ex.code === 'unavailable' || navigator.onLine === false)) return ref.get({ source: 'cache' });
+    throw ex;
+  }); };
   // 1) is this a TEAM member of a distributor (with a role), or the distributor himself?
   read(db.collection('distributor_users').doc(loginId)).then(function(t){
     if(!t.exists){ team = null; P = OWNER_PERMS; return loginId; }
@@ -112,7 +116,11 @@ auth.onAuthStateChanged(function(user){
       if(!d.exists || d.data().isActive === false){ throw new Error(d.exists ? 'Your account is inactive. Contact the admin.' : 'This login is not linked to a distributor.'); }
       startSession(distId);
     });
-  }).catch(function(ex){ $('loginErr').textContent = ex.message || 'Could not load your account.'; auth.signOut(); });
+  }).catch(function(ex){
+    $('loginErr').textContent = ex && ex.code === 'permission-denied' ? 'Access is not set up yet. Ask the admin to publish the latest Firebase rules (firebase deploy --only firestore).'
+      : ex && /cache/i.test(ex.message || '') ? 'Could not load your account — connect to the internet for the first login.' : ((ex && ex.message) || 'Could not load your account.');
+    auth.signOut();
+  });
 });
 
 function stopListening(){ unsubs.forEach(function(u){ try{ u(); }catch(e){} }); unsubs = []; }
