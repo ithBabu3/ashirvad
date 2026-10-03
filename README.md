@@ -75,3 +75,17 @@ built-in admin password in `js/app.js` applies — testing only.
 ## v1.8.0
 - Distributors → Products & price: filter by **category**, tick a whole category (or a card) to show it, and set
   **"Always include new items from these categories"** (new items appear automatically; items you hide stay hidden).
+
+## v2.0.0 — distributor-wise workspace, uid logins, catalogue availability
+- **Admin → Distributors** is now a dashboard of distributor cards; open one for its own workspace:
+  Overview · Products (category › sub-category › card › item tree, ⚡ auto-add new items) · Stock · Sales · Orders · Login & team · Settings.
+- **Delete → re-create with the same name works.** Logins are identified by Firebase uid (`dist_logins/<uid>`), the visible login ID
+  is looked up in `login_index/<id>`; Auth e-mails are opaque. Deleting removes everything; the old password can never reach a new distributor.
+- **Reset password in the website** (distributor, team member, staff): creates a fresh login behind the same login ID and cuts the old one.
+- **Catalogue availability** = company stock + distributors' stock (`stock_totals/<product>`), written atomically with every distributor
+  stock change and reconciled by the admin console. Items with no stock figure stay unlimited (∞).
+- **Per-distributor stock view**: only his own · own + company · own + company + other distributors.
+- **Approve "add product" requests** with a dialog: name / spec / MRP / GST / category and "show to dealers" or private to that distributor.
+- Distributor portal rebuilt mobile-first (bottom tabs, steppers, bottom sheets, offline banner, sales by product / day / each sale, orders with timeline).
+- **Deploy:** `firebase deploy --only firestore,hosting`. Existing distributors created by older versions keep working until you
+  reset their password once (that upgrades them). Team members created in v1.7 must be re-added (they are now keyed by uid).

@@ -283,6 +283,22 @@ function loadProducts(){
   } catch(e){}
   return JSON.parse(JSON.stringify(SEED_PRODUCTS));
 }
+/* ---- Availability shown to dealers: the company's own stock PLUS whatever distributors hold. ----
+   Items with no stock figure (unlimited) stay unlimited. stock_totals/<productId> = { by: { <distributorId>: qty } } is
+   kept up to date by the distributor portal (atomically with every stock change) and reconciled by the admin console. */
+var _dsRaw = null, _dsMap = {};
+function distStockOf(pid){
+  var raw = null; try{ raw = localStorage.getItem('ac_stock_totals'); }catch(e){}
+  if(raw !== _dsRaw){
+    _dsRaw = raw; _dsMap = {};
+    try{ (JSON.parse(raw || '[]') || []).forEach(function(t){ var s = 0, by = (t && t.by) || {}; Object.keys(by).forEach(function(k){ var n = Number(by[k]); if(isFinite(n) && n > 0) s += n; }); _dsMap[String(t.id)] = s; }); }catch(e){}
+  }
+  return _dsMap[String(pid)] || 0;
+}
+function effStock(p){
+  if(!p || p.stock === undefined || p.stock === null || p.stock === Infinity) return Infinity;
+  return (Number(p.stock) || 0) + distStockOf(p.id);
+}
 function saveProducts(list){ localStorage.setItem('ac_products', JSON.stringify(list)); PRODUCTS = list; try{ if(window.__acCatalogChanged) window.__acCatalogChanged(); }catch(e){} }
 var PRODUCTS = loadProducts();
 function activeProducts(){ return PRODUCTS.filter(function(p){ return p.active !== false; }); }
@@ -1645,7 +1661,7 @@ function updateCartBadges(){
 function addToCart(id){
   if(!session) return;
   var p = PRODUCTS.find(function(pp){ return pp.id === id; });
-  var stock = p ? Number(p.stock) : Infinity;
+  var stock = p ? effStock(p) : Infinity;
   var c = getCart();
   var cur = c[id] || 0;
   if(stock !== Infinity && cur >= stock){
@@ -1688,7 +1704,7 @@ function productCardHtml(p){
   var pricing = resolvePricing(p, session, Math.max(qty,1));
   var price = pricing.finalPriceWithGst;
   var breakdown = priceBreakdownText(p, session, Math.max(qty,1));
-  var stock = p.stock === undefined || p.stock === null ? Infinity : Number(p.stock);
+  var stock = effStock(p);
   var oos = stock <= 0;
   var low = !oos && stock <= LOW_STOCK_THRESHOLD;
   var notified = isNotifyRequested(p.id);
@@ -1974,7 +1990,7 @@ function renderSpecGroupRows(g, body){
     var rowBadge = rowHasOverride
       ? '<span class="sg-row-badge">★ Special price</span>'
       : (rowEffectivePct >= 5 ? '<span class="sg-row-badge sg-row-badge-pct">'+rowEffectivePct+'% off</span>' : '');
-    var oosRow = sp && Number(sp.stock) <= 0;
+    var oosRow = sp && effStock(sp) <= 0;
     var basePrice = Math.round((price/(1+(Number(v.gstPct)||0)/100))*100)/100;
     var gstAmt = Math.round((price-basePrice)*100)/100;
     var cta = oosRow
@@ -2025,7 +2041,7 @@ function openProductDetail(id){
   var pdPricing = resolvePricing(p, session, Math.max(qty,1));
   var price = pdPricing.finalPriceWithGst;
   var breakdown = priceBreakdownText(p, session, Math.max(qty,1));
-  var stock = p.stock === undefined || p.stock === null ? Infinity : Number(p.stock);
+  var stock = effStock(p);
   var oos = stock <= 0;
   // This modal always showed the crossed-out MRP, but never called out that a dealer
   // override was in effect — same gap the product card and catalog card had.
@@ -2218,7 +2234,7 @@ function renderRecentlyViewedHtml(){
 
 /* ---- Sort / out-of-stock filter helpers, shared by Home & Search ---- */
 function isProductOOS(p){
-  var stock = p.stock === undefined || p.stock === null ? Infinity : Number(p.stock);
+  var stock = effStock(p);
   return stock <= 0;
 }
 /* A catalog ("New card") is treated as out of stock only when every one of its
@@ -2601,7 +2617,7 @@ function reorderOrder(id){
   var added = 0, skipped = 0;
   o.items.forEach(function(it){
     var p = PRODUCTS.find(function(pp){ return pp.id === it.id; });
-    if(!p || p.active === false || Number(p.stock) <= 0){ skipped++; return; }
+    if(!p || p.active === false || effStock(p) <= 0){ skipped++; return; }
     for(var i=0;i<it.qty;i++) addToCart(p.id);
     added++;
   });
@@ -2870,7 +2886,7 @@ function runCalculator(){
       var lines = computeRuleEquipment(rule, depthFeet, session);
       var cart = getCart();
       lines.forEach(function(l){
-        var stock = l.product.stock === undefined || l.product.stock === null ? Infinity : Number(l.product.stock);
+        var stock = effStock(l.product);
         var cur = cart[l.product.id] || 0;
         var room = stock === Infinity ? l.qty : Math.max(0, stock - cur);
         cart[l.product.id] = cur + Math.min(l.qty, room);
@@ -3012,7 +3028,7 @@ function handleBulkCustomerOrder(file){
       code = String(code).trim().toLowerCase();
       var p = PRODUCTS.find(function(pp){ return String(pp.part).trim().toLowerCase() === code && pp.active !== false; });
       if(!p){ skippedNotFound++; return; }
-      var stock = p.stock === undefined || p.stock === null ? Infinity : Number(p.stock);
+      var stock = effStock(p);
       if(stock <= 0){ skippedOos++; return; }
       var cur = cart[p.id] || 0;
       var room = stock === Infinity ? qty : Math.max(0, stock - cur);
@@ -4766,7 +4782,7 @@ function renderAdminProducts(){
       ? '<div class="admin-empty"><div class="ae-big">No catalog items match</div></div>'
       : catList.slice(from, from + PAGE_SZ).map(function(p){
           var g = gmap[p.specGroupId];
-          var stockTxt = (p.stock === Infinity || p.stock === undefined) ? '∞' : String(p.stock);
+          var stockTxt = (p.stock === Infinity || p.stock === undefined) ? '∞' : (String(p.stock) + (distStockOf(p.id) ? ' <small style="color:#2b6" title="held by distributors">+' + distStockOf(p.id) + ' at distributors</small>' : ''));
           return '<div class="prod-row cat-variant" data-pid="'+p.id+'">' +
             '<div><div class="pr-name">'+esc(p.name)+'</div><div class="pr-size">'+esc(g ? catalogCatName(g.categoryId) : '')+' · '+esc(p.part)+'</div></div>' +
             '<div><label>MRP (₹)</label><b>'+money(p.mrp)+'</b></div>' +
@@ -7030,7 +7046,7 @@ function pricingOverviewDealerHtml(gstList, users){
       : visibleRows.map(function(r){
         var p = r.p, pricing = r.pricing;
         var rateTxt = pricing.overrideIsNet ? '<span class="tier-badge">Net price</span>' : (Math.round(pricing.totalPct||0)+'%');
-        var stockTxt = (p.stock === undefined || p.stock === null) ? 'Unlimited' : (Number(p.stock) > 0 ? Number(p.stock) : 'Out of stock');
+        var stockTxt = (p.stock === undefined || p.stock === null) ? 'Unlimited' : (effStock(p) > 0 ? effStock(p) : 'Out of stock');
         var isEditing = PRICING_OVERVIEW_DEALER_EDIT_PID === p.id;
         var row = '<tr data-pv-dpid="'+p.id+'"'+(r.hasOverride ? ' style="background:#fff8ec;"' : '')+'>' +
           '<td><b>'+esc(p.name)+'</b><div class="ac-sub">'+esc(p.size||'')+' · '+esc(p.part||'')+'</div></td>' +
@@ -7654,6 +7670,8 @@ window.__acApi = {
   getProducts: function(){ return PRODUCTS; },
   getGroups: function(){ return SPEC_GROUPS; },
   getCategories: function(){ return CATALOG_CATEGORIES; },
+  getSubcategories: function(){ return CATALOG_SUBCATEGORIES; },
+  distStockOf: distStockOf,
   saveProducts: saveProducts, nextProductId: nextProductId,
   /* The EXACT item as the admin sees it: for a catalog-card item, name = card title and size = ALL of the
      item's field values (e.g. 2½" · Std class), plus card / category info so lists can be grouped. */

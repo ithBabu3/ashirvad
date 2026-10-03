@@ -106,6 +106,7 @@ var KEYS = {
   ac_audit_log:            { kind:'list', coll:'audit_log',            scope:'admin',  time:true, dealerWrite:true },
   ac_products:             { kind:'list', coll:'products',             scope:'shared', filter:function(p){ return !p.isCatalogVariant; } },
   ac_spec_groups:          { kind:'list', coll:'spec_groups',          scope:'shared' },
+  ac_stock_totals:         { kind:'list', coll:'stock_totals',         scope:'shared', readonly:true, optional:true },
   ac_catalog_categories:   { kind:'list', coll:'catalog_categories',   scope:'shared' },
   ac_catalog_subcategories:{ kind:'list', coll:'catalog_subcategories',scope:'shared' },
   ac_offers:               { kind:'list', coll:'offers',               scope:'shared' },
@@ -205,6 +206,7 @@ var _voT = 0;
 function viewOnlyNotice(){ if(Date.now() - _voT < 4000) return; _voT = Date.now(); try{ toast('👁 View-only login — changes are not saved'); }catch(e){} }
 function canWrite(bucket){
   if(!CLOUD.writesEnabled) return false;
+  if(bucket && bucket.cfg && bucket.cfg.readonly) return false;      // written only by the distributor portal / admin reconcile
   if(CLOUD.role === 'admin'){
     if(CLOUD.staffRole === 'viewer'){ viewOnlyNotice(); return false; }   // view-only staff login: nothing is saved
     return true;
@@ -338,7 +340,7 @@ function listen(b){
         }
         if(changed){ b.str = undefined; scheduleRefresh(); }
       }, function(err){
-        if(first){ first = false; reject(err); } else console.warn('[cloud] listener error', b.key, err);
+        if(first){ first = false; if(b.cfg && b.cfg.optional){ b.docs = new Map(); b.synced = new Map(); resolve(); } else reject(err); } else console.warn('[cloud] listener error', b.key, err);
       });
       listeners.push(unsub);
     });
@@ -419,8 +421,13 @@ CLOUD.dealerRegister = function(p){
     return db.collection('accounts').doc(ph).set({ gsts: firebase.firestore.FieldValue.arrayUnion(p.gst) }, { merge: true });
   });
 };
+/* staff logins created in the website use an opaque e-mail; login_index/staff_<username> tells us which one (older logins fall back to <username>@domain) */
+function staffEmail(username){
+  var key = 'staff_' + String(username || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  return db.collection('login_index').doc(key).get().then(function(d){ return (d.exists && d.data().email) || adminEmail(username); }, function(){ return adminEmail(username); });
+}
 CLOUD.adminLogin = function(username, password){
-  return auth.signInWithEmailAndPassword(adminEmail(username), password).then(function(cred){
+  return staffEmail(username).then(function(em){ return auth.signInWithEmailAndPassword(em, password); }).then(function(cred){
     return db.collection('admins').doc(cred.user.uid).get().then(function(d){
       if(!d.exists){ return auth.signOut().then(function(){ var e = new Error('not admin'); e.code = 'ac/not-admin'; throw e; }); }
     });

@@ -1,7 +1,7 @@
 /* Distributor portal service worker — lets the page open without internet.
    Network first (you always get the newest version when online), cached copy when offline.
    Firestore / Auth API traffic is never touched here: the Firestore SDK keeps its own offline copy of the data. */
-var V = 'acd-shell-v1';
+var V = 'acd-shell-v2';
 self.addEventListener('install', function(e){ e.waitUntil(caches.open(V).then(function(c){ return c.add('./'); }).catch(function(){ }).then(function(){ return self.skipWaiting(); })); });
 self.addEventListener('activate', function(e){
   e.waitUntil(caches.keys().then(function(ks){ return Promise.all(ks.filter(function(k){ return k !== V; }).map(function(k){ return caches.delete(k); })); }).then(function(){ return self.clients.claim(); }));
