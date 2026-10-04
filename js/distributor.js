@@ -13,6 +13,7 @@
    ========================================================================== */
 (function(){
 'use strict';
+if(!window.firebase){ if(window.acLoader) window.acLoader.fail('The app files could not be loaded. Check your internet connection and try again.'); return; }
 var cfg = window.AC_FIREBASE_CONFIG || {}, opt = window.AC_CLOUD_OPTIONS || {};
 var DOMAIN = opt.distributorEmailDomain || 'distributor.ashirvadconnect.app';
 var $ = function(id){ return document.getElementById(id); };
@@ -38,6 +39,7 @@ if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js', { up
 var OWNER_PERMS = { stock: 'edit', sales: 'manage', orders: 'place', history: 'view', price: 'view', requests: 'add' };
 var me = null, team = null, P = OWNER_PERMS, loginId = '', uid = '', unsubs = [];
 var items = [], reqs = [], salesList = [], ordersList = [], dirty = {};
+var stockLoaded = false;
 var tab = 'stock', sub = null, filt = 'all', sortBy = 'name', catF = '', qStock = '', stLimit = 40;
 var sPeriod = 'today', sMode = 'prod', hPeriod = '7', hist = null, histKey = '';
 var saleLines = [], saleMeta = { customer: '', note: '' }, cart = [], orderNote = '';
@@ -96,7 +98,8 @@ $('menuBtn').onclick = function(){ tab = 'more'; sub = null; render(); window.sc
 
 /* Who is this login?  dist_logins/<uid> = { distributorId, roleId } (new logins);  older logins fall back to the e-mail name. */
 auth.onAuthStateChanged(function(user){
-  if(!user){ stopSession(); $('appWrap').classList.add('d-none'); $('loginWrap').classList.remove('d-none'); return; }
+  if(!user){ stopSession(); $('appWrap').classList.add('d-none'); $('loginWrap').classList.remove('d-none'); splashDone(); return; }
+  if(window.acLoader) window.acLoader.set(55, 'Loading your account…');
   uid = user.uid; var mail = String(user.email || '').toLowerCase();
   if(mail.slice(-(DOMAIN.length + 1)) !== '@' + DOMAIN){ loginErr('This login is not a distributor account.'); auth.signOut(); return; }
   loginId = mail.split('@')[0];
@@ -120,7 +123,8 @@ auth.onAuthStateChanged(function(user){
 });
 $('bizName').parentNode.addEventListener('click', function(){});
 
-function stopSession(){ unsubs.forEach(function(u){ try{ u(); }catch(e){} }); unsubs = []; me = null; team = null; items = []; reqs = []; salesList = []; ordersList = []; dirty = {}; clearTimeout(idleT); var sb = $('saveBar'); if(sb) sb.remove(); }
+function splashDone(){ if(window.acLoader) window.acLoader.done(); }
+function stopSession(){ unsubs.forEach(function(u){ try{ u(); }catch(e){} }); unsubs = []; me = null; team = null; stockLoaded = false; items = []; reqs = []; salesList = []; ordersList = []; dirty = {}; clearTimeout(idleT); var sb = $('saveBar'); if(sb) sb.remove(); }
 function startSession(id){
   stopSession();
   $('loginWrap').classList.add('d-none'); $('appWrap').classList.remove('d-none');
@@ -132,7 +136,7 @@ function startSession(id){
     unsubs.push(db.collection('roles').doc(team.roleId).onSnapshot(function(r){ if(r.exists && !r.metadata.hasPendingWrites && JSON.stringify(r.data().perms || {}) !== JSON.stringify(P)){ toast('Your access was changed — reloading'); setTimeout(function(){ location.reload(); }, 1200); } }, function(){ }));
   }
   unsubs.push(db.collection('distributor_stock').where('distributorId', '==', id).where('visible', '==', true).onSnapshot({ includeMetadataChanges: true }, function(s){
-    setPending('stock', s);
+    setPending('stock', s); stockLoaded = true;
     if(!s.docChanges().length && items.length) return;
     items = s.docs.map(function(x){ var o = x.data(); o.id = x.id; return o; });
     Object.keys(dirty).forEach(function(k){ var it = itemById(k); if(!it || dirty[k] === (Number(it.qty) || 0)) delete dirty[k]; });
@@ -183,7 +187,7 @@ function render(){
   $('who').textContent = team ? team.name + ' · team login' : (me.city || 'Distributor');
   renderNav();
   ({ stock: viewStock, sell: viewSell, orders: viewOrders, more: viewMore })[tab]();
-  renderSaveBar(); renderSync();
+  renderSaveBar(); renderSync(); splashDone();
 }
 function renderNav(){
   var low = items.filter(function(it){ return statusOf(curQty(it)) !== 'ok'; }).length;
@@ -239,7 +243,8 @@ function viewStock(){
     '<div class="kpis"><div class="kpi' + (filt === 'all' ? ' on' : '') + '" data-f="all"><b>' + items.length + '</b><span>Items</span></div><div class="kpi"><b id="kUnits">' + total + '</b><span>Total units</span></div><div class="kpi' + (filt === 'low' ? ' on' : '') + '" data-f="low"><b id="kLow" style="color:#a8680a">' + low + '</b><span>Low</span></div><div class="kpi' + (filt === 'oos' ? ' on' : '') + '" data-f="oos"><b id="kOos" style="color:#b23b3b">' + oos + '</b><span>Out</span></div></div>' +
     '<div class="tools"><input class="inp" id="sQ" type="search" placeholder="Search item, size or part…" value="' + esc(qStock) + '"><select class="inp" id="sSort" style="max-width:42%"><option value="name">A–Z</option><option value="low">Lowest first</option><option value="old">Not updated</option><option value="new">Recent</option></select></div>' +
     (catNames.length > 1 ? '<div class="chips"><button type="button" class="chip' + (!catF ? ' on' : '') + '" data-cat="">All</button>' + catNames.map(function(c){ return '<button type="button" class="chip' + (catF === c ? ' on' : '') + '" data-cat="' + esc(c) + '">' + esc(c) + '</button>'; }).join('') + '</div>' : '');
-  if(!items.length) h += '<div class="card empty"><div class="big">📦</div><b>No products yet</b><div class="sub">Your supplier has not chosen products for you yet.</div></div>';
+  if(!items.length && !stockLoaded) h += (window.acLoader ? window.acLoader.skeleton(5, 'card') : '<div class="card empty">Loading…</div>');
+  else if(!items.length) h += '<div class="card empty"><div class="big">📦</div><b>No products yet</b><div class="sub">Your supplier has not chosen products for you yet.</div></div>';
   else if(!list.length) h += '<div class="card empty">No items match.</div>';
   else h += shown.map(itemCard).join('') + (list.length > shown.length ? '<button type="button" class="btn ghost block" id="moreBtn">Show more (' + (list.length - shown.length) + ' left)</button>' : '');
   if(items.length && (low + oos) > 0) h += '<button type="button" class="btn ghost block" id="shareLow" style="margin-top:8px">📲 Share low-stock list</button>';

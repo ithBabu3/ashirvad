@@ -1,8 +1,38 @@
 <!DOCTYPE html>
-<html lang="en" id="htmlRoot">
+<html lang="en" class="ac-loading" id="htmlRoot">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style id="acLoaderCss">
+html.ac-loading body{overflow:hidden}
+#acSplash{position:fixed;inset:0;z-index:2147483000;background:#0a1322;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;font-family:Poppins,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;transition:opacity .35s ease,visibility .35s}
+#acSplash.acs-out{opacity:0;visibility:hidden}
+.acs-ring{width:64px;height:64px;margin-bottom:18px}.acs-ring svg{width:100%;height:100%;animation:acsSpin 1.4s linear infinite}
+.acs-name{font-family:'Cormorant Garamond',Georgia,serif;font-size:28px;font-weight:700;letter-spacing:.3px;line-height:1.1}.acs-name b{color:#e6c878}
+.acs-sub{font-size:11px;letter-spacing:2.5px;opacity:.6;margin-top:4px}
+.acs-bar{width:min(260px,70vw);height:5px;border-radius:99px;background:rgba(255,255,255,.14);overflow:hidden;margin:20px 0 10px}
+.acs-bar i{display:block;height:100%;width:6%;background:linear-gradient(90deg,#c9a24b,#f1d98f);border-radius:99px;transition:width .5s ease}
+.acs-txt{font-size:13px;opacity:.85;min-height:18px}
+.acs-help{font-size:12.5px;opacity:0;transition:opacity .4s;margin-top:14px;max-width:330px;line-height:1.45;color:#f4e3b0}
+.acs-help button,#acsRetry{background:#c9a24b;color:#241c05;border:0;border-radius:10px;padding:10px 22px;font-weight:700;font-size:14px;margin-top:10px;cursor:pointer;font-family:inherit}
+#acSplash.acs-fail .acs-ring svg{animation:none;opacity:.45}
+@keyframes acsSpin{to{transform:rotate(360deg)}}
+img.ac-img-wait{background:linear-gradient(100deg,#ece8da 30%,#f8f5ec 50%,#ece8da 70%);background-size:220% 100%;animation:acShim 1.15s linear infinite;min-width:28px;min-height:28px}
+img.ac-img-fail{object-fit:contain!important;cursor:pointer;background:#f1efe6}
+@keyframes acShim{to{background-position:-220% 0}}
+.ac-skel{position:relative;overflow:hidden;background:#ece8da;border-radius:12px;margin:10px 0}.ac-skel-line{height:56px}.ac-skel-card{height:120px}
+.ac-skel::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.65) 50%,transparent 70%);transform:translateX(-100%);animation:acSk 1.3s infinite}
+@keyframes acSk{to{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.acs-ring svg,img.ac-img-wait,.ac-skel::after{animation-duration:4s}}
+</style>
+<script src="js/loader.js?v=2.1.0"></script>
+<link rel="preconnect" href="https://www.gstatic.com">
+<link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+<link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js">
+<link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
+
 <meta name="theme-color" content="#0a1322">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -15,14 +45,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <!-- Styles -->
-<link rel="stylesheet" href="css/vendor/bootstrap.min.css?v=2.0.0">
-<link rel="stylesheet" href="css/style.css?v=2.0.0">
+<link rel="stylesheet" href="css/vendor/bootstrap.min.css?v=2.1.0">
+<link rel="stylesheet" href="css/style.css?v=2.1.0">
 
 <!-- Libraries (kept local so the portal works without any CDN) -->
-<script src="js/vendor/xlsx.mini.js?v=2.0.0"></script>
-<script src="js/vendor/qrcode.js?v=2.0.0"></script>
+<script defer src="js/vendor/xlsx.mini.js?v=2.1.0"></script>
+<script defer src="js/vendor/qrcode.js?v=2.1.0"></script>
 </head>
 <body>
+<div id="acSplash" role="status" aria-live="polite"><div class="acs-ring"><svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="26" stroke="rgba(255,255,255,.15)" stroke-width="4"/><path d="M32 6a26 26 0 0 1 26 26" stroke="#e6c878" stroke-width="4" stroke-linecap="round"/></svg></div><div class="acs-name">Ashirvad<b>Connect</b></div><div class="acs-bar"><i></i></div><div class="acs-txt">Starting…</div><div class="acs-help"></div></div>
+
 <!-- ================= AUTH SCREEN ================= -->
 <div id="authScreen">
   <div class="auth-card">
@@ -338,6 +370,7 @@
       <button data-atab="configuration">⚙️ Configuration</button>
       <button data-atab="reports">📈 Reports</button>          
       <button data-atab="distributors">🚚 Distributors</button>
+      <button data-atab="data">🗄 Data</button>
     </div>
   </div>
   <div id="adminMain"></div>
@@ -415,8 +448,8 @@
     </div>
   </div>
 </div>
-<script src="js/vendor/bootstrap.bundle.min.js?v=2.0.0"></script>
-<script src="js/firebase-config.js?v=2.0.0"></script>
-<script src="js/cloud/firebase-boot.js?v=2.0.0"></script>
+<script src="js/vendor/bootstrap.bundle.min.js?v=2.1.0"></script>
+<script src="js/firebase-config.js?v=2.1.0"></script>
+<script src="js/cloud/firebase-boot.js?v=2.1.0"></script>
 </body>
 </html>

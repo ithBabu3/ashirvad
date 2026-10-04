@@ -26,6 +26,15 @@ var CLOUD = window.AC_CLOUD = { enabled: enabled, role: 'none', staffRole: 'owne
 var thisScript = document.currentScript;
 var APP_SRC = thisScript ? thisScript.src.replace(/cloud\/firebase-boot\.js/, 'app.js') : 'js/app.js';
 
+function loadOrdered(srcs){          /* fetch together, execute in the given order -> much faster on a slow connection */
+  return Promise.all(srcs.map(function(src){
+    return new Promise(function(res, rej){
+      var s = document.createElement('script'); s.src = src; s.async = false;
+      s.onload = res; s.onerror = function(){ rej(new Error('Could not load ' + src)); };
+      document.head.appendChild(s);
+    });
+  }));
+}
 function loadScript(src){
   return new Promise(function(res, rej){
     var s = document.createElement('script'); s.src = src;
@@ -34,16 +43,18 @@ function loadScript(src){
   });
 }
 function startApp(){
+  step(88, 'Starting the app…');
   return loadScript(APP_SRC)
     .then(function(){
       if(CLOUD.role !== 'admin') return;
-      return loadScript(APP_SRC.replace('app.js', 'admin-distributors.js'))
-        .catch(function(e){ console.error('[AshirvadConnect] could not load admin-distributors.js — is the file named exactly js/admin-distributors.js ?', e); });
+      return Promise.all(['admin-distributors.js', 'admin-data.js'].map(function(f){
+        return loadScript(APP_SRC.replace('app.js', f)).catch(function(e){ console.error('[AshirvadConnect] could not load ' + f + ' — is the file named exactly js/' + f + ' ?', e); });
+      }));
     })
     .then(function(){ setTimeout(function(){ CLOUD.writesEnabled = true; }, 700); });
 }
 
-if(!enabled){ startApp(); return; }   // local mode — nothing else to do
+if(!enabled){ startApp().then(function(){ hideOverlay(); }, function(e){ fatal(e); }); return; }   // local mode — nothing else to do
 
 /* ---------------------------------------------------------------- helpers */
 var $ = function(id){ return document.getElementById(id); };
@@ -75,7 +86,9 @@ function clean(v){ return JSON.parse(JSON.stringify(v)); }   // drops undefined,
 
 /* ------------------------------------------------------------ boot overlay */
 var overlay;
+function step(p, t){ try{ if(window.acLoader) window.acLoader.set(p, t); }catch(e){} }
 function showOverlay(html){
+  if(window.acLoader && document.getElementById('acSplash')) return;      // the splash screen in the page does the talking
   if(!overlay){
     overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#0a1322;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Poppins,system-ui,sans-serif;text-align:center;padding:24px;';
@@ -83,9 +96,10 @@ function showOverlay(html){
   }
   overlay.innerHTML = html;
 }
-function hideOverlay(){ if(overlay){ overlay.remove(); overlay = null; } }
+function hideOverlay(){ try{ if(window.acLoader) window.acLoader.done(); }catch(e){} if(overlay){ overlay.remove(); overlay = null; } }
 function fatal(err){
   console.error('[cloud]', err);
+  if(window.acLoader && document.getElementById('acSplash')){ window.acLoader.fail(String((err && err.message) || err), function(){ location.reload(); }); return; }
   showOverlay('<div style="font-size:34px;margin-bottom:10px">⚠️</div><div style="font-weight:600;font-size:16px;margin-bottom:8px">Could not connect</div>' +
     '<div style="opacity:.75;font-size:13px;max-width:340px;margin-bottom:16px">' + String((err && err.message) || err).replace(/</g, '&lt;') + '</div>' +
     '<button id="acRetry" style="background:#c9a24b;border:0;border-radius:8px;padding:10px 22px;font-weight:600">Try again</button>');
@@ -347,7 +361,9 @@ function listen(b){
   });
 }
 function preloadAll(){
-  return Promise.all(Object.keys(buckets).map(function(k){ return listen(buckets[k]); }));
+  var keys = Object.keys(buckets), n = 0;
+  step(50, 'Loading your data…');
+  return Promise.all(keys.map(function(k){ return listen(buckets[k]).then(function(r){ n++; step(50 + Math.round(35 * n / keys.length), 'Loading your data… ' + n + '/' + keys.length); return r; }); }));
 }
 
 /* Refresh the visible screen after data changed elsewhere — but never while someone is typing / has a dialog open. */
@@ -535,10 +551,10 @@ CLOUD.openAdminPanel = function(){
 function boot(){
   showOverlay('<div style="font-family:\'Cormorant Garamond\',serif;font-size:26px;font-weight:700;margin-bottom:6px">AshirvadConnect</div><div style="opacity:.7;font-size:13px">Connecting…</div>');
   var base = 'https://www.gstatic.com/firebasejs/' + opt.sdkVersion + '/';
-  return loadScript(base + 'firebase-app-compat.js')
-    .then(function(){ return loadScript(base + 'firebase-auth-compat.js'); })
-    .then(function(){ return loadScript(base + 'firebase-firestore-compat.js'); })
+  step(8, 'Connecting…');
+  return loadOrdered([base + 'firebase-app-compat.js', base + 'firebase-auth-compat.js', base + 'firebase-firestore-compat.js'])
     .then(function(){
+      step(35, 'Checking your sign-in…');
       firebase = window.firebase;
       firebase.initializeApp(cfg);
       auth = firebase.auth(); db = firebase.firestore();
@@ -582,6 +598,7 @@ function finish(role){
   if(role !== 'admin') ls.removeItem('ac_admin_session');
   else if(!ls.getItem('ac_admin_session')) ls.setItem('ac_admin_session', '1');
   if(role === 'none'){ ls.removeItem('ac_session'); return startApp(); }
+  step(45, 'Signed in');
   return preloadAll().then(function(){
     CLOUD.published = buckets.ac_settings.docs.size > 0;
     Object.keys(buckets).forEach(function(k){ buckets[k].str = undefined; });

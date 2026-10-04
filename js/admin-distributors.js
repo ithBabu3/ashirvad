@@ -493,7 +493,7 @@ function openAdjust(s, d){
 function viewSales(distId){
   var A = S.sl, body = $$('dvBody');
   var key = A.period + '|' + (distId || A.dist || '');
-  setBody('<div class="dw-card dw-empty">Loading sales…</div>');
+  setBody((window.acLoader ? window.acLoader.skeleton(4) : '<div class="dw-card dw-empty">Loading sales…</div>'));
   fetchSales(A.period, distId || A.dist || '', function(rows, err){
     if(!$$('dvBody')) return;
     if(!rows){ showFail(err, 'distributor_sales'); return; }
@@ -845,7 +845,7 @@ function stockReport(){
 function stockAdded(){
   var A = S.ad, box = $$('stBody');
   if(A.rows === null || A.key !== A.period){
-    box.innerHTML = '<div class="dw-card dw-empty">Loading…</div>';
+    box.innerHTML = (window.acLoader ? window.acLoader.skeleton(4) : '<div class="dw-card dw-empty">Loading…</div>');
     var since = periodStart(A.period), q = db().collection('distributor_log'); if(since) q = q.where('ts', '>=', since);
     q.orderBy('ts', 'desc').limit(3000).get().then(function(s){ A.rows = s.docs.map(function(x){ return x.data(); }); A.key = A.period; if(tabActive() && S.tab === 'stock' && S.stView === 'added' && $$('stBody')) stockAdded(); }, function(e){ showFail(e, 'distributor_log'); });
     return;
@@ -876,7 +876,7 @@ function stockAdded(){
 
 /* ================================================================== activity log */
 function viewLog(distId){
-  setBody('<div class="dw-card dw-empty">Loading…</div>');
+  setBody((window.acLoader ? window.acLoader.skeleton(4) : '<div class="dw-card dw-empty">Loading…</div>'));
   var q = db().collection('distributor_log'); if(distId) q = q.where('distributorId', '==', distId);
   q.orderBy('ts', 'desc').limit(250).get().then(function(s){
     if(!$$('dvBody')) return;
@@ -903,7 +903,7 @@ var DEFAULT_ROLES = [
 function roleSummary(p){ p = p || {}; return PERMS.map(function(d){ var o = d.opts.filter(function(x){ return x[0] === (p[d.k] || d.opts[0][0]); })[0]; return d.label + ': ' + (o ? o[1] : '—'); }).join(' · '); }
 function viewAccess(){
   if(S.staff === null){
-    setBody('<div class="dw-card dw-empty">Loading…</div>');
+    setBody((window.acLoader ? window.acLoader.skeleton(4) : '<div class="dw-card dw-empty">Loading…</div>'));
     db().collection('admins').get().then(function(s){ S.staff = s.docs.map(function(x){ var o = x.data(); o.uid = x.id; return o; }); if(tabActive() && S.tab === 'access') viewAccess(); }, function(e){ showFail(e, 'admins'); });
     return;
   }

@@ -1723,7 +1723,7 @@ function productCardHtml(p){
   return '' +
     '<div class="product-card" data-id="'+p.id+'">' +
       '<div class="product-media" data-open-detail="'+p.id+'" style="cursor:pointer;'+(hasImg?' padding:0; background:var(--ivory-100);':'')+'">' +
-        (hasImg ? '<img src="'+esc(p.images[0])+'" alt="'+esc(p.name)+'" style="width:100%; height:100%; object-fit:contain;" onload="fitCardImage(this)" onerror="this.style.display=\'none\'; this.nextElementSibling.style.display=\'flex\';">'+('<div style="display:none; width:100%; height:100%; align-items:center; justify-content:center;">'+productMediaSvg(p.cat)+'</div>') : productMediaSvg(p.cat)) +
+        (hasImg ? '<img loading="lazy" decoding="async" src="'+esc(p.images[0])+'" alt="'+esc(p.name)+'" style="width:100%; height:100%; object-fit:contain;" onload="fitCardImage(this)" onerror="this.style.display=\'none\'; this.nextElementSibling.style.display=\'flex\';">'+('<div style="display:none; width:100%; height:100%; align-items:center; justify-content:center;">'+productMediaSvg(p.cat)+'</div>') : productMediaSvg(p.cat)) +
         '<button type="button" class="wish-btn'+(wished?' active':'')+'" data-wish-id="'+p.id+'">'+(wished?'♥':'♡')+'</button>' +
         ribbonHtml +
         (oos ? '<div class="oos-overlay"><span class="oos-tag">'+t('product.outOfStock')+'</span></div>' : '') +
@@ -1853,7 +1853,7 @@ function specGroupCardHtml(g){
   return '' +
     '<div class="product-card" data-sg-id="'+g.id+'">' +
       '<div class="product-media" data-open-sg="'+g.id+'" style="cursor:pointer;'+(hasImg?' padding:0; background:var(--ivory-100);':'')+'">' +
-        (hasImg ? '<img src="'+esc(images[0])+'" alt="'+esc(g.title)+'" style="width:100%; height:100%; object-fit:contain;" onload="fitCardImage(this)" onerror="this.style.display=\'none\'; this.nextElementSibling.style.display=\'flex\';">'+('<div style="display:none; width:100%; height:100%; align-items:center; justify-content:center;">'+productMediaSvg(g.categoryId)+'</div>') : productMediaSvg(g.categoryId)) +
+        (hasImg ? '<img loading="lazy" decoding="async" src="'+esc(images[0])+'" alt="'+esc(g.title)+'" style="width:100%; height:100%; object-fit:contain;" onload="fitCardImage(this)" onerror="this.style.display=\'none\'; this.nextElementSibling.style.display=\'flex\';">'+('<div style="display:none; width:100%; height:100%; align-items:center; justify-content:center;">'+productMediaSvg(g.categoryId)+'</div>') : productMediaSvg(g.categoryId)) +
         '<button type="button" class="wish-btn'+(wished?' active':'')+'" data-wish-id="'+specGroupWishKey(g)+'">'+(wished?'♥':'♡')+'</button>' +
         ribbonHtml +
         '<span class="uc-sizes-chip">'+g.variants.length+' '+t('catalog.sizes')+'</span>' +
@@ -1884,7 +1884,7 @@ function openCatalogCardModal(g){
   var galleryHtml = images.length === 0 ? '' : (
     '<div class="sg-gallery" style="border-radius:10px; margin-bottom:12px;">' +
       '<div class="sg-gallery-scroll" id="ccGalleryScroll">' +
-        images.map(function(src){ return '<div class="sg-slide"><img src="'+esc(src)+'" alt="'+esc(g.title)+'" loading="lazy"></div>'; }).join('') +
+        images.map(function(src){ return '<div class="sg-slide"><img loading="lazy" decoding="async" src="'+esc(src)+'" alt="'+esc(g.title)+'" loading="lazy"></div>'; }).join('') +
       '</div>' +
       (multi ? (
         '<div class="sg-dots" id="ccDots">' + images.map(function(_,i){ return '<span class="dot'+(i===0?' active':'')+'"></span>'; }).join('') + '</div>' +
@@ -3449,6 +3449,7 @@ function renderAdmin(){
   else if(currentAdminTab === 'configuration') renderAdminConfiguration();
   else if(currentAdminTab === 'reports') renderAdminReports();    
   else if(currentAdminTab === 'distributors' && window.__acAdminTabs && window.__acAdminTabs.distributors) window.__acAdminTabs.distributors();
+  else if(currentAdminTab === 'data' && window.__acAdminTabs && window.__acAdminTabs.data) window.__acAdminTabs.data();
 }
 
 /* ---------------- Dashboard tab ---------------- */
@@ -6772,6 +6773,18 @@ function renderAdminConfiguration(){
       btn: 'Open Delivery Settings',
       action: function(){ openDeliverySettings(); }
     },
+    (CLOUD && CLOUD.enabled && (!CLOUD.staffRole || CLOUD.staffRole === 'owner')) ? {
+      icon: '🗄', title: 'Data Manager (database browser)',
+      sub: 'Look at everything stored in the database in plain words — orders, dealers, products, distributors … — fix a value, add or delete records, back up and restore. Owner only.',
+      btn: 'Open Data Manager',
+      action: function(){ goToAdminTab('data'); }
+    } : null,
+    (CLOUD && CLOUD.enabled && (!CLOUD.staffRole || CLOUD.staffRole === 'owner')) ? {
+      icon: '☢', title: 'Delete data / Factory reset',
+      sub: 'Wipe orders, dealers, the catalogue, distributors … or everything, and start fresh. You choose what goes and can download a backup first.',
+      btn: 'Open Factory reset',
+      action: function(){ window.__acDataOpen = 'reset'; goToAdminTab('data'); }
+    } : null,
     {
       icon: '💾', title: 'Full Backup',
       sub: 'Download a full backup of orders, dealers, catalog and settings.',

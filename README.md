@@ -89,3 +89,15 @@ built-in admin password in `js/app.js` applies — testing only.
 - Distributor portal rebuilt mobile-first (bottom tabs, steppers, bottom sheets, offline banner, sales by product / day / each sale, orders with timeline).
 - **Deploy:** `firebase deploy --only firestore,hosting`. Existing distributors created by older versions keep working until you
   reset their password once (that upgrades them). Team members created in v1.7 must be re-added (they are now keyed by uid).
+
+## v2.1.0 — loaders, Data Manager, Factory reset
+- **Splash loader** on the store, admin console and distributor portal (`js/loader.js`): real progress steps, a "slow connection" message
+  after 6 s, Retry after 22 s, offline notice, and a clear error with Try again if the app cannot start.
+- **Image loader**: shimmer placeholder while an image loads, lazy loading, automatic retries, and a "tap to retry" tile if it never arrives.
+- **Faster on weak internet**: Firebase SDK files download in parallel, heavy libraries no longer block first paint, and a service worker
+  (`sw.js`, plus `distributor/sw.js`) keeps the app files so repeat visits open quickly and even work offline.
+- **Admin → Data (🗄)** and **Configuration → Data Manager** (Owner only, `js/admin-data.js`): browse every collection in plain words,
+  search, edit through a friendly form (or raw JSON), add / duplicate / delete records, export JSON / CSV, import, full backup and restore.
+- **Delete data / Factory reset**: choose exactly what to wipe (orders, dealers, catalogue, distributors, audit log, settings, staff) or everything.
+  Needs your admin password + typing the confirmation word; optional automatic backup download first; login IDs are freed so names can be reused.
+- Deploy: `firebase deploy --only firestore,hosting` (no new rules needed for this version).
