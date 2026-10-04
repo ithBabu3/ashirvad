@@ -25,7 +25,7 @@ img.ac-img-fail{object-fit:contain!important;cursor:pointer;background:#f1efe6}
 @keyframes acSk{to{transform:translateX(100%)}}
 @media (prefers-reduced-motion:reduce){.acs-ring svg,img.ac-img-wait,.ac-skel::after{animation-duration:4s}}
 </style>
-<script src="../js/loader.js?v=2.2.0"></script>
+<script src="../js/loader.js?v=2.3.1"></script>
 <link rel="preconnect" href="https://www.gstatic.com">
 <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
 <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
@@ -46,12 +46,12 @@ img.ac-img-fail{object-fit:contain!important;cursor:pointer;background:#f1efe6}
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 
 <!-- Styles -->
-<link rel="stylesheet" href="../css/vendor/bootstrap.min.css?v=2.2.0">
-<link rel="stylesheet" href="../css/style.css?v=2.2.0">
+<link rel="stylesheet" href="../css/vendor/bootstrap.min.css?v=2.3.1">
+<link rel="stylesheet" href="../css/style.css?v=2.3.1">
 
 <!-- Libraries (kept local so the portal works without any CDN) -->
-<script defer src="../js/vendor/xlsx.mini.js?v=2.2.0"></script>
-<script defer src="../js/vendor/qrcode.js?v=2.2.0"></script>
+<script defer src="../js/vendor/xlsx.mini.js?v=2.3.1"></script>
+<script defer src="../js/vendor/qrcode.js?v=2.3.1"></script>
 </head>
 <body>
 <div id="acSplash" role="status" aria-live="polite"><div class="acs-ring"><svg viewBox="0 0 64 64" fill="none"><circle cx="32" cy="32" r="26" stroke="rgba(255,255,255,.15)" stroke-width="4"/><path d="M32 6a26 26 0 0 1 26 26" stroke="#e6c878" stroke-width="4" stroke-linecap="round"/></svg></div><div class="acs-name">Ashirvad<b>Connect</b></div><div class="acs-sub">ADMIN</div><div class="acs-bar"><i></i></div><div class="acs-txt">Starting…</div><div class="acs-help"></div></div>
@@ -201,6 +201,7 @@ img.ac-img-fail{object-fit:contain!important;cursor:pointer;background:#f1efe6}
       <div class="brand-actions">
         <button class="icon-btn" id="openWishlist" title="Wishlist">♡</button>
         <button class="icon-btn" id="openBulkOrder" title="Bulk order">📤</button>
+        <button class="icon-btn" id="openTools" title="Dealer tools: quick order, quotes">🧰</button>
         <button class="icon-btn" id="openOrders" title="Orders">🧾</button>
         <button class="icon-btn" id="openCart" title="Cart">🛒<span class="cart-badge d-none" id="cartBadge">0</span></button>
         <button class="icon-btn" id="openAccount" title="Account">👤</button>
@@ -449,8 +450,8 @@ img.ac-img-fail{object-fit:contain!important;cursor:pointer;background:#f1efe6}
     </div>
   </div>
 </div>
-<script src="../js/vendor/bootstrap.bundle.min.js?v=2.2.0"></script>
-<script src="../js/firebase-config.js?v=2.2.0"></script>
-<script src="../js/cloud/firebase-boot.js?v=2.2.0"></script>
+<script src="../js/vendor/bootstrap.bundle.min.js?v=2.3.1"></script>
+<script src="../js/firebase-config.js?v=2.3.1"></script>
+<script src="../js/cloud/firebase-boot.js?v=2.3.1"></script>
 </body>
 </html>

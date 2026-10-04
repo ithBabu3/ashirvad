@@ -1037,6 +1037,7 @@ var SETTINGS_DEFAULTS = {
   freeDeliveryMin:3000,
   deliveryCharge:150,
   logoUrl:'',
+  monthTarget:0, monthReward:'',
   upiId:'', upiName:'', payNowOn:true, payLaterOn:true, payNote:''
 };
 function loadSettings(){
@@ -1623,6 +1624,7 @@ document.getElementById('openAccount').addEventListener('click', function(){ ren
 document.getElementById('openOrders').addEventListener('click', function(){ setView('orders'); });
 document.getElementById('openBulkOrder').addEventListener('click', function(){ document.getElementById('bulkOrderFile').click(); });
 document.getElementById('openWishlist').addEventListener('click', function(){ setView('wishlist'); });
+document.getElementById('openTools').addEventListener('click', openDealerTools);
 document.getElementById('bulkOrderFile').addEventListener('change', function(e){
   var file = e.target.files[0];
   if(file) handleBulkCustomerOrder(file);
@@ -2993,9 +2995,6 @@ function renderCartPanel(){
     '<div class="row-line"><span>'+t('cart.subtotal')+'</span><span>'+money(subtotalBeforeGst)+'</span></div>' +
     '<div class="row-line"><span>'+t('cart.gst')+'</span><span>'+money(gstAmount)+'</span></div>' +
     (deliveryCharge > 0 ? '<div class="row-line"><span>'+t('cart.deliveryCharge')+'</span><span>'+money(deliveryCharge)+'</span></div>' : '') +
-    '<div class="stock-note'+(deliveryCharge>0?' low':'')+'" style="margin-bottom:4px;">' +
-      (deliveryCharge > 0 ? t('cart.addMoreForFree').replace('{n}', money(freeMin-total)) : (freeMin>0 ? t('cart.freeDeliveryUnlocked') : '')) +
-    '</div>' +
     '<div class="row-total"><span>'+t('cart.total')+'</span><span>'+money(grandTotal)+'</span></div>' +
     (isDealerActive(session) ? '' : '<div class="stock-note low" style="margin:6px 0; color:var(--maroon-600); font-weight:600;">'+esc(blockedNoticeText(session))+'</div>') +
     payChoiceHtml() + '<button type="button" class="btn-royal" id="placeOrderBtn"'+(isDealerActive(session) ? '' : ' disabled style="opacity:.5; cursor:not-allowed;"')+'>'+t('cart.placeOrder')+'</button>' +
@@ -3014,6 +3013,8 @@ function renderCartPanel(){
     btn.addEventListener('click', function(){ removeFromCart(Number(btn.getAttribute('data-id'))); });
   });
   document.getElementById('placeOrderBtn').addEventListener('click', placeOrder);
+  itemsWrap.insertAdjacentHTML('beforeend', '<div class="cart-extras">' + cartNudgesHtml(cart, total, freeMin, grandTotal) + '<button type="button" class="btn btn-link w-100" id="cartQuoteBtn" style="color:var(--navy-900); font-weight:600; font-size:12.5px;">📄 Make a quote for my customer</button></div>');
+  var qb = document.getElementById('cartQuoteBtn'); if(qb) qb.addEventListener('click', function(){ cartOffcanvas.hide(); openQuoteMaker(); });
   document.getElementById('continueShoppingBtn').addEventListener('click', function(){ cartOffcanvas.hide(); });
 }
 
@@ -3123,6 +3124,7 @@ function placeOrder(){
 var CART_PAY_MODE = 'now';
 function r2(n){ return Math.round((Number(n)||0) * 100) / 100; }
 function upiOn(){ return !!(SETTINGS.upiId && SETTINGS.payNowOn !== false); }
+function nowOn(){ return SETTINGS.payNowOn !== false && !!(SETTINGS.upiId || SETTINGS.payNote); }   // UPI QR, or just bank details if no UPI ID
 function laterOn(){ return SETTINGS.payLaterOn !== false; }
 function orderPaid(o){ return r2(PAYMENTS.filter(function(p){ return p.orderId === o.id; }).reduce(function(s, p){ return s + Number(p.amount || 0); }, 0)); }
 function orderBalance(o){ return Math.max(0, r2(orderPayable(o) - orderPaid(o))); }
@@ -3155,9 +3157,10 @@ function utrUsedElsewhere(utr, orderId){
   '.pay-unpaid,.pay-rejected{background:#fde8e8;color:#b23b3b}.pay-later{background:#eceff4;color:#52607a}',
   '.pay-block{background:#f7f9fd;border:1px solid #dbe4f4;border-radius:12px;padding:10px 12px;margin-top:10px;font-size:13px}',
   '.pay-block .pb-row{display:flex;justify-content:space-between;padding:2px 0}.pay-block .pb-msg{margin-top:6px;font-size:12.5px;color:#44506a}',
-  '.pay-choice{border:1.5px solid #dbe4f4;border-radius:12px;padding:10px 12px;margin:8px 0}.pay-choice .pc-t{font-weight:700;margin-bottom:6px}',
-  '.pay-choice label{display:block;border:1.5px solid #d8dbe3;border-radius:10px;padding:8px 10px;margin:6px 0;cursor:pointer;font-size:13px}',
-  '.pay-choice label.on{border-color:#17325c;background:#f3f6fc}.pay-choice small{display:block;color:#6b7280;font-size:11.5px;margin-top:2px}',
+  '.pay-choice{border:1.5px solid #dbe4f4;border-radius:12px;padding:8px 10px;margin:6px 0 8px;background:#fafcff}.pay-choice .pc-t{font-weight:700;font-size:12.5px;margin-bottom:6px}',
+  '.pay-choice .pc-seg{display:flex;gap:6px}.pay-choice .pc-opt{flex:1;margin:0;position:relative;text-align:center;border:1.5px solid #d3d9e6;border-radius:10px;padding:7px 4px;cursor:pointer;font-size:13px;font-weight:700;line-height:1.2;background:#fff;color:#17325c;display:block}',
+  '.pay-choice .pc-opt input{position:absolute;opacity:0;pointer-events:none;width:0;height:0}.pay-choice .pc-opt small{display:block;font-weight:500;font-size:10.5px;color:#6b7280;margin-top:1px}',
+  '.pay-choice .pc-opt.on{border-color:#17325c;background:#17325c;color:#fff}.pay-choice .pc-opt.on small{color:#cfd9ee}.pay-choice .pc-note{font-size:11.5px;color:#52607a;margin-top:6px}',
   '.acpay-ov{position:fixed;inset:0;z-index:20050;background:rgba(10,19,34,.6);display:flex;align-items:flex-end;justify-content:center}',
   '.acpay-sheet{background:#fff;width:100%;max-width:460px;max-height:94vh;overflow:auto;border-radius:20px 20px 0 0;padding:16px 16px calc(18px + env(safe-area-inset-bottom))}',
   '@media(min-width:620px){.acpay-ov{align-items:center}.acpay-sheet{border-radius:20px}}',
@@ -3174,14 +3177,16 @@ function paySheet(html){ paySheetClose(); var w = document.createElement('div');
 function paySheetClose(){ var w = document.getElementById('acPaySheet'); if(w) w.remove(); }
 
 /* ---- checkout: Pay now / Pay later ---- */
-function payChoiceModes(){ var m = []; if(!upiOn()) return m; m.push('now'); if(laterOn()) m.push('later'); return m; }   // no UPI ID set -> the old behaviour, no choice shown
+function payChoiceModes(){ var m = []; if(!nowOn()) return m; m.push('now'); if(laterOn()) m.push('later'); return m; }   // nothing to pay with yet -> the old behaviour, no choice shown
+var PAY_NOTES = { now: 'A QR code and an “Open UPI app” button appear right after you place the order.', nowBank: 'Our bank details appear right after you place the order — pay, then enter the reference number.', later: 'The amount is added to your account balance. Pay any time from My Orders.' };
+function payNoteFor(k){ return k === 'now' && !upiOn() ? PAY_NOTES.nowBank : PAY_NOTES[k]; }
 function payChoiceHtml(){
   var modes = payChoiceModes(); if(!modes.length) return '';
   if(modes.indexOf(CART_PAY_MODE) < 0) CART_PAY_MODE = modes[0];
-  var opt = function(k, title, sub){ return '<label class="' + (CART_PAY_MODE === k ? 'on' : '') + '"><input type="radio" name="acPayMode" value="' + k + '"' + (CART_PAY_MODE === k ? ' checked' : '') + '> <b>' + title + '</b><small>' + sub + '</small></label>'; };
-  return '<div class="pay-choice"><div class="pc-t">💳 Payment</div>' +
-    (modes.indexOf('now') >= 0 ? opt('now', 'Pay now with UPI', 'A QR code and “Open UPI app” button appear right after you place the order.') : '') +
-    (modes.indexOf('later') >= 0 ? opt('later', 'Pay later', 'The amount is added to your account. Pay any time from My Orders.') : '') + '</div>';
+  var btn = function(k, label){ return '<label class="pc-opt' + (CART_PAY_MODE === k ? ' on' : '') + '" data-pcnote="' + esc(payNoteFor(k)) + '"><input type="radio" name="acPayMode" value="' + k + '"' + (CART_PAY_MODE === k ? ' checked' : '') + '>' + label + '</label>'; };
+  return '<div class="pay-choice"><div class="pc-t">💳 How would you like to pay?</div><div class="pc-seg">' +
+    (modes.indexOf('now') >= 0 ? btn('now', '📱 Pay now<small>' + (upiOn() ? 'UPI' : 'bank transfer') + '</small>') : '') + (modes.indexOf('later') >= 0 ? btn('later', '🕒 Pay later<small>on account</small>') : '') +
+    '</div><div class="pc-note">' + esc(payNoteFor(CART_PAY_MODE)) + '</div></div>';
 }
 function payChoiceMode(){ var m = payChoiceModes(); if(!m.length) return null; return m.indexOf(CART_PAY_MODE) >= 0 ? CART_PAY_MODE : m[0]; }
 
@@ -3298,10 +3303,283 @@ document.addEventListener('click', function(e){
 }, true);
 document.addEventListener('change', function(e){
   var t = e.target;
-  if(t && t.name === 'acPayMode'){ CART_PAY_MODE = t.value; var lab = t.closest('.pay-choice'); if(lab) lab.querySelectorAll('label').forEach(function(l){ l.classList.toggle('on', l.querySelector('input').checked); }); }
+  if(t && t.name === 'acPayMode'){ CART_PAY_MODE = t.value; var box = t.closest('.pay-choice'); if(box){ box.querySelectorAll('label').forEach(function(l){ l.classList.toggle('on', l.querySelector('input').checked); }); var nt = box.querySelector('.pc-note'); if(nt) nt.textContent = payNoteFor(t.value) || ''; } }
   else if(t && t.id === 'ordPayFilter'){ ORDER_UI.pay = t.value; ORDER_UI.page = 1; renderAdminOrders(); }
 });
 setInterval(function(){ if(adminSession) updatePayBadge(); }, 20000);
+
+/* ================= Dealer tools: quick order (paste a list), cart nudges, quote maker =================
+   Everything here runs in the browser on data the app already loaded — ZERO extra Firestore reads or writes,
+   so it is completely free-plan friendly. (Quote numbers / margin are remembered on the device only.) */
+(function(){ if(document.getElementById('acToolsCss')) return; var st = document.createElement('style'); st.id = 'acToolsCss';
+  st.textContent = [
+  '.nudge{background:#fff8e1;border:1px solid #f2dc9b;border-radius:10px;padding:8px 10px;margin:6px 0;font-size:12.5px;display:flex;gap:8px;align-items:center;justify-content:space-between}',
+  '.nudge button{border:0;background:#17325c;color:#fff;border-radius:8px;padding:5px 10px;font-weight:700;font-size:12px;white-space:nowrap;cursor:pointer}',
+  '.nd-box{margin:8px 0;padding:8px 10px;border:1px solid #e2e8f4;border-radius:10px;font-size:12.5px;background:#fbfcfe}',
+  '.nd-bar{height:8px;background:#e8ecf4;border-radius:99px;overflow:hidden;margin:5px 0}.nd-bar i{display:block;height:100%;background:linear-gradient(90deg,#c9a24b,#e6c878);transition:width .4s}',
+  '.nd-bar.red i{background:#b23b3b}.nd-bar.green i{background:#1e7b46}.nd-bar.amber i{background:#d9962b}',
+  '.acpay-sheet.wide{max-width:700px}.cart-extras{margin-top:8px}',
+  '.qo-row{border:1px solid #e6dfcb;border-radius:12px;padding:8px 10px;margin-bottom:8px;background:#fff}.qo-row.bad{border-color:#f0c4c4;background:#fff8f8}.qo-row.off{opacity:.55}',
+  '.qo-raw{font-size:11.5px;color:#6b7280;margin-bottom:4px;word-break:break-word}.qo-line{display:flex;gap:6px;align-items:center}.qo-line select{flex:1;min-width:0;padding:8px}.qo-line input[type=number]{width:72px;padding:8px}',
+  '.qo-hint{font-size:11.5px;color:#52607a;margin-top:3px}.qo-res{margin-top:4px}.qo-res button{display:block;width:100%;text-align:left;border:1px solid #e1e6f0;background:#fff;border-radius:8px;padding:7px 9px;margin-top:3px;font-size:12.5px;cursor:pointer}',
+  '.qt-item{display:grid;grid-template-columns:1fr auto;gap:4px 8px;border-top:1px solid #eef0f5;padding:8px 0}.qt-item input{width:84px;padding:7px;text-align:right}.qt-sub{font-size:11.5px;color:#6b7280}',
+  '.qt-priv{background:#f3f9f5;border:1px dashed #9fd2b2;border-radius:10px;padding:8px 10px;font-size:12.5px;margin-top:8px}',
+  '.acq-print{display:none}',
+  '@media print{body>*:not(.acq-print){display:none!important}.acq-print{display:block!important;position:static!important;background:#fff;color:#111}}',
+  '.acq-doc{font-family:Arial,Helvetica,sans-serif;font-size:13px;max-width:780px;margin:0 auto;padding:18px}.acq-doc h1{font-size:22px;margin:0}.acq-doc table{width:100%;border-collapse:collapse;margin-top:12px}',
+  '.acq-doc th{background:#17325c;color:#fff;text-align:left;padding:7px;font-size:12px}.acq-doc td{border-bottom:1px solid #ddd;padding:7px;vertical-align:top}.acq-doc .r{text-align:right}'
+  ].join('\n'); document.head.appendChild(st); })();
+function toolSheet(html, wide){ var w = paySheet(html); if(wide && w.firstChild) w.firstChild.classList.add('wide'); return w; }
+function $t(id){ return document.getElementById(id); }
+function productDeepText(p){          /* name + size + part + ALL spec values of a catalog-card item, so "75 mm Heavy" can match */
+  var t = [p.name, p.size, p.part, p.cat];
+  if(p.isCatalogVariant){
+    var g = SPEC_GROUPS.find(function(x){ return x.id === p.specGroupId; }), v = g && (g.variants || []).find(function(x){ return x.id === p.variantId; });
+    if(g && v) (g.fields || []).forEach(function(f){ t.push((v.values || {})[f.id]); });
+  }
+  return t.filter(function(x){ return x !== undefined && x !== null && x !== ''; }).join(' ');
+}
+function orderableProducts(){ return PRODUCTS.filter(function(p){ return p.active !== false || p.isCatalogVariant; }); }
+/* ---- tiny fuzzy matcher (numbers weigh more than words, codes match exactly) ---- */
+var QO_SYN = { bend: 'elbow', coupling: 'coupler', socket: 'coupler', pc: '', pcs: '', nos: '', no: '', piece: '', pieces: '', x: '', of: '', the: '', and: '', in: 'inch', inches: 'inch' };
+function qoTokens(s){
+  s = String(s || '').toLowerCase().replace(/[”“″]/g, '"').replace(/(\d)\s*(?:"|''|inch(?:es)?\b|in\b)/g, '$1 inch ').replace(/(\d)([a-z])/g, '$1 $2').replace(/([a-z])(\d)/g, '$1 $2').replace(/[^a-z0-9.\/]+/g, ' ');
+  return s.split(/\s+/).filter(Boolean).map(function(w){ return QO_SYN[w] !== undefined ? QO_SYN[w] : w; }).filter(Boolean);
+}
+function buildProductIndex(){
+  return orderableProducts().map(function(p){ var toks = qoTokens(productDeepText(p)); return { p: p, toks: toks, set: toks.reduce(function(m, t){ m[t] = 1; return m; }, {}), code: String(p.part || '').toUpperCase().replace(/[^A-Z0-9]/g, '') }; });
+}
+function qoScore(qt, e){
+  var w = 0, m = 0;
+  qt.forEach(function(t){
+    var wt = /^\d/.test(t) ? 2 : (t.length <= 2 ? 0.5 : 1); w += wt;
+    if(e.set[t]) m += wt; else if(t.length >= 4 && e.toks.some(function(h){ return h.length >= 4 && (h.indexOf(t) === 0 || t.indexOf(h) === 0); })) m += wt * 0.7;
+  });
+  var s = w ? m / w : 0;
+  return s - Math.min(0.1, e.toks.length * 0.003);
+}
+function qoFind(text, idx, max){
+  var qt = qoTokens(text), up = String(text || '').toUpperCase().replace(/[^A-Z0-9 ]/g, ' ').split(/\s+/).filter(function(x){ return x.length >= 5 && /\d/.test(x); });
+  var scored = idx.map(function(e){ var s = qoScore(qt, e); if(up.indexOf(e.code) >= 0 && e.code.length >= 5) s = 2; return { p: e.p, s: s }; }).filter(function(x){ return x.s >= 0.34; });
+  scored.sort(function(a, b){ return b.s - a.s; });
+  return scored.slice(0, max || 4);
+}
+function qoParseLine(raw){
+  var s = String(raw || '').trim(); if(!s) return null;
+  s = s.replace(/^[\s\-\*\u2022•]+/, '').replace(/^\d{1,2}[\.\)]\s+/, '');
+  var m, qty = null, text = s;
+  if((m = /^(\d+)\s*(?:x|×|\*|nos?|pcs?|pieces?|qty)\.?\s+(.+)$/i.exec(s))){ qty = Number(m[1]); text = m[2]; }
+  else if((m = /^(.+?)[\s\-:=]*(?:x|×|\*|qty:?)\s*(\d+)\s*(?:nos?|pcs?|pieces?)?$/i.exec(s))){ qty = Number(m[2]); text = m[1]; }
+  else if((m = /^(.+?)[\s]*[\-:=]\s*(\d+)\s*(?:nos?|pcs?|pieces?)?$/i.exec(s))){ qty = Number(m[2]); text = m[1]; }
+  else if((m = /^(.+?)\s+(\d+)\s*(?:nos?|pcs?|pieces?)$/i.exec(s))){ qty = Number(m[2]); text = m[1]; }
+  else if((m = /^(\d+)\s+(?!mm\b|cm\b|inch|in\b|"|kg\b|ltr\b|m\b)(.*[A-Za-z].*)$/i.exec(s)) && Number(m[1]) <= 5000){ qty = Number(m[1]); text = m[2]; }
+  if(!qty || qty < 1) qty = 1;
+  return { raw: raw.trim(), qty: Math.min(99999, qty), text: text.replace(/\s+/g, ' ').trim() };
+}
+function qoSplit(text){
+  var lines = String(text || '').split(/\r?\n|;/).map(function(x){ return x.trim(); }).filter(Boolean);
+  if(lines.length === 1 && /,/.test(lines[0])) lines = lines[0].split(/,(?=\s*[A-Za-z0-9])/).map(function(x){ return x.trim(); }).filter(Boolean);
+  return lines.slice(0, 150).map(qoParseLine).filter(Boolean);
+}
+var QO = { rows: [], idx: null };
+function qoOptLabel(p){ var s = effStock(p); return p.name + (p.size && p.name.indexOf(p.size) < 0 ? ' — ' + p.size : '') + ' · ' + p.part + ' · ' + money(finalPrice(p, session, 1)) + (s <= 0 ? ' · OUT OF STOCK' : ''); }
+function qoRowHtml(r, i){
+  var p = r.sel ? PRODUCTS.find(function(x){ return x.id === r.sel; }) : null;
+  var opts = r.cands.map(function(id){ var q = PRODUCTS.find(function(x){ return x.id === id; }); return q ? '<option value="' + q.id + '"' + (q.id === r.sel ? ' selected' : '') + '>' + esc(qoOptLabel(q)) + '</option>' : ''; }).join('');
+  var hint = '';
+  if(!p) hint = '<span style="color:#b23b3b">Not found — tap 🔍 to search, or skip.</span>';
+  else { var s = effStock(p); hint = s <= 0 ? '<span style="color:#b23b3b">Out of stock — will be skipped.</span>' : (r.qty > s ? '<span style="color:#8a5a00">Only ' + s + ' available — that many will be added.</span>' : 'Unit price ' + money(finalPrice(p, session, r.qty)) + ' · line ' + money(finalPrice(p, session, r.qty) * r.qty)); }
+  return '<div class="qo-row' + (!p ? ' bad' : '') + (r.on ? '' : ' off') + '" data-qi="' + i + '"><div class="qo-raw">“' + esc(r.raw) + '”</div><div class="qo-line"><input type="checkbox" data-qon="' + i + '"' + (r.on && p ? ' checked' : '') + (p ? '' : ' disabled') + ' style="width:20px;height:20px">' +
+    '<select data-qosel="' + i + '"><option value="">— skip this line —</option>' + opts + '</select><input type="number" min="1" data-qoq="' + i + '" value="' + r.qty + '"><button type="button" class="nudge-btn" data-qofind="' + i + '" title="Search another item" style="border:1.5px solid #cdd6e6;background:#fff;border-radius:8px;padding:7px 9px;cursor:pointer">🔍</button></div>' +
+    '<div class="qo-hint" data-qohint="' + i + '">' + hint + '</div><div class="qo-res" id="qores' + i + '"></div></div>';
+}
+function qoTotals(){
+  var n = 0, tot = 0;
+  QO.rows.forEach(function(r){ if(!r.on || !r.sel) return; var p = PRODUCTS.find(function(x){ return x.id === r.sel; }); if(!p) return; var s = effStock(p); if(s <= 0) return; var q = Math.min(r.qty, s === Infinity ? r.qty : s); n++; tot += finalPrice(p, session, q) * q; });
+  return { n: n, tot: tot };
+}
+function qoPaintFoot(){ var t = qoTotals(), el = $t('qoFoot'), b = $t('qoAdd'); if(el) el.innerHTML = '<b>' + t.n + '</b> item' + (t.n === 1 ? '' : 's') + ' ready · about <b>' + money(t.tot) + '</b>'; if(b) b.disabled = !t.n; }
+function openQuickOrder(){
+  if(!session){ showToast('Please sign in first'); return; }
+  QO.rows = []; QO.idx = null;
+  toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>📋 Quick order</h3><div class="sub">Paste your WhatsApp / notebook list — one item per line. We find the items and fill the cart.</div></div><button type="button" class="acpay-btn ghost" id="qoX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<div id="qoStep1"><label class="l">Your list</label><textarea id="qoText" rows="8" placeholder="10 x 75mm SWR pipe\\n5 elbow 90 deg 4 inch\\n70001838 - 20\\nsolvent cement 2 nos"></textarea><div class="sub" style="margin-top:4px">Works with: “10 x item”, “item - 10”, “item x10”, “10 pcs item”, or an item code.</div><div class="acpay-row"><button type="button" class="acpay-btn gold" id="qoGo">Find my items</button></div></div><div id="qoStep2" style="display:none"></div>', true);
+  $t('qoX').onclick = paySheetClose;
+  $t('qoGo').onclick = function(){
+    var parsed = qoSplit($t('qoText').value); if(!parsed.length){ showToast('Paste at least one line'); return; }
+    QO.idx = buildProductIndex();
+    QO.rows = parsed.map(function(r){ var c = qoFind(r.text, QO.idx, 4); var best = c.length && c[0].s >= 0.55 ? c[0].p.id : null; return { raw: r.raw, qty: r.qty, cands: c.map(function(x){ return x.p.id; }), sel: best || (c.length ? c[0].p.id : null), on: !!best, text: r.text }; });
+    $t('qoStep1').style.display = 'none'; var s2 = $t('qoStep2'); s2.style.display = 'block';
+    s2.innerHTML = '<div class="sub" style="margin-bottom:8px">Check each line. Pick the right item from the list, fix the quantity, or skip it.</div><div id="qoRows">' + QO.rows.map(qoRowHtml).join('') + '</div><div class="pay-block" id="qoFoot"></div>' +
+      '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="qoBack">← Edit list</button><button type="button" class="acpay-btn green" id="qoAdd">Add to cart</button></div>';
+    qoPaintFoot();
+    $t('qoBack').onclick = function(){ $t('qoStep2').style.display = 'none'; $t('qoStep1').style.display = 'block'; };
+    $t('qoAdd').onclick = qoAddToCart;
+    var rowsEl = $t('qoRows'), repaint = function(i){ var r = QO.rows[i], el = rowsEl.querySelector('[data-qi="' + i + '"]'); if(el) el.outerHTML = qoRowHtml(r, i); qoPaintFoot(); };
+    rowsEl.addEventListener('change', function(e){
+      var t = e.target, i;
+      if((i = t.getAttribute('data-qosel')) !== null){ var r = QO.rows[Number(i)]; r.sel = t.value ? Number(t.value) : null; r.on = !!r.sel; repaint(Number(i)); }
+      else if((i = t.getAttribute('data-qon')) !== null){ QO.rows[Number(i)].on = t.checked; repaint(Number(i)); }
+    });
+    rowsEl.addEventListener('input', function(e){ var t = e.target, i = t.getAttribute('data-qoq'); if(i !== null){ QO.rows[Number(i)].qty = Math.max(1, Math.floor(Number(t.value)) || 1); var h = rowsEl.querySelector('[data-qohint="' + i + '"]'); var r = QO.rows[Number(i)], p = r.sel && PRODUCTS.find(function(x){ return x.id === r.sel; }); if(h && p){ var s = effStock(p); h.innerHTML = s <= 0 ? '<span style="color:#b23b3b">Out of stock — will be skipped.</span>' : (r.qty > s ? '<span style="color:#8a5a00">Only ' + s + ' available — that many will be added.</span>' : 'Unit price ' + money(finalPrice(p, session, r.qty)) + ' · line ' + money(finalPrice(p, session, r.qty) * r.qty)); } qoPaintFoot(); }
+      var sq = t.getAttribute('data-qos'); if(sq !== null){ var res = $t('qores' + sq), q = t.value.trim(); if(q.length < 2){ res.innerHTML = ''; return; } var hits = qoFind(q, QO.idx, 6); res.innerHTML = hits.length ? hits.map(function(h){ return '<button type="button" data-qopick="' + sq + ':' + h.p.id + '">' + esc(qoOptLabel(h.p)) + '</button>'; }).join('') : '<div class="qo-hint">No match — try the item code or fewer words.</div>'; } });
+    rowsEl.addEventListener('click', function(e){
+      var b = e.target.closest('button'); if(!b) return; var f = b.getAttribute('data-qofind'), pk = b.getAttribute('data-qopick');
+      if(f !== null){ var res = $t('qores' + f); res.innerHTML = '<input type="text" data-qos="' + f + '" placeholder="Type name, size or code…" style="width:100%;padding:8px;border:1.5px solid #d8dbe3;border-radius:8px">'; var inp = res.querySelector('input'); if(inp) inp.focus(); }
+      else if(pk){ var parts = pk.split(':'), i = Number(parts[0]), id = Number(parts[1]), r = QO.rows[i]; if(r.cands.indexOf(id) < 0) r.cands.unshift(id); r.sel = id; r.on = true; repaint(i); }
+    });
+  };
+}
+function qoAddToCart(){
+  var cart = getCart(), added = 0, oos = 0, capped = 0, skipped = 0;
+  QO.rows.forEach(function(r){
+    if(!r.on || !r.sel){ skipped++; return; }
+    var p = PRODUCTS.find(function(x){ return x.id === r.sel; }); if(!p){ skipped++; return; }
+    var stock = effStock(p); if(stock <= 0){ oos++; return; }
+    var cur = cart[p.id] || 0, room = stock === Infinity ? r.qty : Math.max(0, stock - cur), add = Math.min(r.qty, room);
+    if(add < r.qty) capped++; if(add > 0){ cart[p.id] = cur + add; added++; }
+  });
+  saveCart(cart); updateCartBadges(); renderProductGrids(); paySheetClose();
+  showToast('Quick order: ' + added + ' item(s) added' + (skipped ? ', ' + skipped + ' skipped' : '') + (oos ? ', ' + oos + ' out of stock' : '') + (capped ? ', ' + capped + ' capped to stock' : ''));
+  renderCartPanel(); cartOffcanvas.show();
+}
+
+/* ---- cart nudges: free delivery, bulk-price slabs, credit limit, monthly target ---- */
+function monthSpend(gst){
+  var now = new Date(), y = now.getFullYear(), mo = now.getMonth();
+  return r2(getAllOrders().filter(function(o){ var d = new Date(Number(o.createdAt) || 0); return o.dealerGst === gst && o.status !== 'cancelled' && d.getFullYear() === y && d.getMonth() === mo; }).reduce(function(s, o){ return s + orderPayable(o); }, 0));
+}
+function nudgeBar(pct, cls){ return '<div class="nd-bar ' + (cls || '') + '"><i style="width:' + Math.max(2, Math.min(100, pct)) + '%"></i></div>'; }
+function slabNudges(cart){
+  var out = [];
+  Object.keys(cart).forEach(function(id){
+    var p = PRODUCTS.find(function(pp){ return pp.id === Number(id); }); if(!p || !p.bulkTiers || !p.bulkTiers.length) return;
+    var qty = cart[id], next = null;
+    p.bulkTiers.forEach(function(t){ var mq = Number(t.minQty); if(mq > qty && (!next || mq < Number(next.minQty))) next = t; });
+    if(!next) return;
+    var mq = Number(next.minQty), need = mq - qty; if(need > Math.max(5, Math.ceil(qty * 0.6))) return;
+    if(effStock(p) < mq) return;
+    var cur = finalPrice(p, session, qty), nu = finalPrice(p, session, mq), save = r2((cur - nu) * mq);
+    if(save <= 0) return;
+    out.push({ p: p, need: need, bonus: Number(next.bonusPct) || 0, save: save });
+  });
+  return out.sort(function(a, b){ return b.save - a.save; }).slice(0, 2);
+}
+function cartNudgesHtml(cart, total, freeMin, grandTotal){
+  var h = '';
+  if(freeMin > 0){ var pct = total / freeMin * 100; h += '<div class="nd-box">' + (total >= freeMin ? '🎉 <b>Free delivery unlocked</b>' : '🚚 Add <b>' + money(freeMin - total) + '</b> more for free delivery') + nudgeBar(pct, total >= freeMin ? 'green' : '') + '</div>'; }
+  slabNudges(cart).forEach(function(n){ h += '<div class="nudge"><span>💡 Add <b>' + n.need + '</b> more <b>' + esc(n.p.name) + '</b> → extra ' + n.bonus + '% off, you save about <b>' + money(n.save) + '</b></span><button type="button" data-nudge-add="' + n.p.id + '" data-nudge-qty="' + n.need + '">+' + n.need + '</button></div>'; });
+  var u = getUsers()[session] || {}, limit = Number(u.creditLimit) || 0;
+  if(limit > 0){ var after = outstandingForDealer(session) + grandTotal, pc = after / limit * 100; h += '<div class="nd-box">💳 Credit: this order takes your balance to <b>' + money(after) + '</b> of <b>' + money(limit) + '</b>' + nudgeBar(pc, pc > 100 ? 'red' : pc > 80 ? 'amber' : 'green') + (pc > 100 ? '<span style="color:#b23b3b">Over your limit by ' + money(after - limit) + ' — please pay some dues first.</span>' : '') + '</div>'; }
+  var tg = Number(SETTINGS.monthTarget) || 0;
+  if(tg > 0){ var spent = monthSpend(session), now = spent + grandTotal, left = tg - now; h += '<div class="nd-box">🎯 <b>Monthly target</b> ' + money(Math.min(now, tg)) + ' of ' + money(tg) + (left > 0 ? ' — <b>' + money(left) + '</b> to go' : ' — <b>reached! 🎉</b>') + (SETTINGS.monthReward ? '<div class="sub" style="color:#52607a">' + esc(SETTINGS.monthReward) + '</div>' : '') + nudgeBar(now / tg * 100, now >= tg ? 'green' : '') + '</div>'; }
+  return h;
+}
+function monthlyCardHtml(){
+  var tg = Number(SETTINGS.monthTarget) || 0; if(!(tg > 0) || !session) return '';
+  var spent = monthSpend(session), left = tg - spent;
+  return '<div class="account-card mb-3"><div class="ac-title" style="font-weight:700;margin-bottom:6px">🎯 This month</div><div class="ac-row"><span class="ac-label">Ordered</span><span class="ac-val">' + money(spent) + ' of ' + money(tg) + '</span></div>' + nudgeBar(spent / tg * 100, spent >= tg ? 'green' : '') +
+    '<div class="ac-sub">' + (left > 0 ? money(left) + ' more to reach your monthly target.' : '🎉 Target reached!') + (SETTINGS.monthReward ? ' ' + esc(SETTINGS.monthReward) : '') + '</div></div>';
+}
+document.addEventListener('click', function(e){
+  var b = e.target.closest ? e.target.closest('[data-nudge-add]') : null; if(!b) return;
+  var id = Number(b.getAttribute('data-nudge-add')), n = Number(b.getAttribute('data-nudge-qty')) || 1, p = PRODUCTS.find(function(x){ return x.id === id; }); if(!p) return;
+  var c = getCart(), stock = effStock(p), cur = c[id] || 0; c[id] = stock === Infinity ? cur + n : Math.min(stock, cur + n); saveCart(c); updateCartBadges(); renderProductGrids(); renderCartPanel();
+}, true);
+
+/* ---- quote maker: the dealer's own price quote for HIS customer (margin on top of his cost) ---- */
+var QT = { items: [], margin: 15, round: 1, customer: '', phone: '', notes: '', days: 7, showGst: false, q: '' };
+function qtPrefs(){ try{ return JSON.parse(localStorage.getItem('ac_quote_prefs_' + session) || '{}') || {}; }catch(e){ return {}; } }
+function qtSavePrefs(){ try{ localStorage.setItem('ac_quote_prefs_' + session, JSON.stringify({ margin: QT.margin, round: QT.round, days: QT.days, showGst: QT.showGst, notes: QT.notes })); }catch(e){} }
+function qtRound(v){ var s = Number(QT.round) || 0; return s > 0 ? Math.ceil(v / s - 1e-9) * s : r2(v); }
+function qtCost(it){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); return p ? finalPrice(p, session, it.qty) : 0; }
+function qtRecalc(){ QT.items.forEach(function(it){ if(!it.manual) it.price = qtRound(qtCost(it) * (1 + QT.margin / 100)); }); }
+function qtTotals(){
+  var sell = 0, cost = 0, taxable = 0;
+  QT.items.forEach(function(it){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return; var line = (Number(it.price) || 0) * it.qty; sell += line; cost += qtCost(it) * it.qty; taxable += line / (1 + (Number(p.gstPct) || 0) / 100); });
+  return { sell: r2(sell), cost: r2(cost), profit: r2(sell - cost), pct: cost > 0 ? r2((sell - cost) / cost * 100) : 0, taxable: r2(taxable), gst: r2(sell - taxable) };
+}
+function openQuoteMaker(){
+  if(!session){ showToast('Please sign in first'); return; }
+  var pf = qtPrefs(); QT.margin = pf.margin !== undefined ? pf.margin : 15; QT.round = pf.round !== undefined ? pf.round : 1; QT.days = pf.days || 7; QT.showGst = !!pf.showGst; QT.notes = pf.notes || ''; QT.customer = ''; QT.phone = ''; QT.q = '';
+  var cart = getCart(); QT.items = Object.keys(cart).map(function(id){ return { id: Number(id), qty: cart[id], manual: false, price: 0 }; }).filter(function(it){ return PRODUCTS.some(function(p){ return p.id === it.id; }); });
+  qtRecalc();
+  toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>📄 Quote for my customer</h3><div class="sub">Add your margin, share a neat price quote. Your buying price is never shown to the customer.</div></div><button type="button" class="acpay-btn ghost" id="qtX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<div class="acpay-row"><div><label class="l">Customer name</label><input id="qtCust" placeholder="e.g. Ramesh Constructions"></div><div><label class="l">Customer phone</label><input id="qtPhone" type="tel" inputmode="tel" placeholder="for WhatsApp"></div></div>' +
+    '<div class="acpay-row"><div><label class="l">My margin %</label><input id="qtMargin" type="number" step="any" min="0" value="' + QT.margin + '"></div><div><label class="l">Round prices up to</label><select id="qtRound"><option value="0">Exact</option><option value="1">₹1</option><option value="5">₹5</option><option value="10">₹10</option></select></div><div><label class="l">Valid for (days)</label><input id="qtDays" type="number" min="1" value="' + QT.days + '"></div></div>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px"><input type="checkbox" id="qtGst" style="width:18px;height:18px"' + (QT.showGst ? ' checked' : '') + '> Show GST separately on the quote (prices are GST-inclusive)</label>' +
+    '<label class="l">Add items</label><input id="qtSearch" placeholder="🔍 Search name, size or code…"><div id="qtRes" class="qo-res"></div>' +
+    '<div id="qtList" style="margin-top:6px"></div><div id="qtPriv" class="qt-priv"></div>' +
+    '<label class="l">Notes / terms (shown on the quote)</label><textarea id="qtNotes" rows="2" placeholder="e.g. Delivery within 3 days. 50% advance.">' + esc(QT.notes) + '</textarea>' +
+    '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="qtPrint">🖨 Print / Save PDF</button><button type="button" class="acpay-btn green" id="qtWa">📲 Send on WhatsApp</button></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="qtCopy">Copy as text</button></div>', true);
+  $t('qtRound').value = String(QT.round);
+  var idx = buildProductIndex();
+  function paint(){
+    qtRecalc();
+    $t('qtList').innerHTML = QT.items.length ? QT.items.map(function(it, i){
+      var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return '';
+      return '<div class="qt-item"><div><b>' + esc(p.name) + '</b><div class="qt-sub">' + esc(p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + esc(p.part) + ' · my cost ' + money(qtCost(it)) + '</div></div><div style="text-align:right"><button type="button" class="acpay-btn ghost" data-qtdel="' + i + '" style="padding:3px 9px;font-size:12px">✕</button></div>' +
+        '<div><label class="qt-sub">Qty</label> <input type="number" min="1" data-qtq="' + i + '" value="' + it.qty + '" style="width:70px"></div><div style="text-align:right"><label class="qt-sub">Selling price (each)</label> <input type="number" step="any" min="0" data-qtp="' + i + '" value="' + it.price + '"><div class="qt-sub">Line ' + money(it.price * it.qty) + '</div></div></div>'; }).join('') : '<div class="sub" style="padding:10px 0">No items yet — search above' + (Object.keys(getCart()).length ? '' : ' (or fill your cart first and open this again)') + '.</div>';
+    var t = qtTotals();
+    $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(t.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(t.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(t.profit) + ' (' + t.pct + '%)</b><div class="qt-sub">Only you see this box.</div>';
+  }
+  paint();
+  var go = function(id, ev, fn){ $t(id).addEventListener(ev, fn); };
+  go('qtX', 'click', paySheetClose);
+  go('qtCust', 'input', function(e){ QT.customer = e.target.value; }); go('qtPhone', 'input', function(e){ QT.phone = e.target.value; });
+  go('qtMargin', 'input', function(e){ QT.margin = Math.max(0, Number(e.target.value) || 0); QT.items.forEach(function(it){ it.manual = false; }); paint(); qtSavePrefs(); });
+  go('qtRound', 'change', function(e){ QT.round = Number(e.target.value); QT.items.forEach(function(it){ it.manual = false; }); paint(); qtSavePrefs(); });
+  go('qtDays', 'input', function(e){ QT.days = Math.max(1, Math.floor(Number(e.target.value)) || 7); qtSavePrefs(); });
+  go('qtGst', 'change', function(e){ QT.showGst = e.target.checked; qtSavePrefs(); });
+  go('qtNotes', 'input', function(e){ QT.notes = e.target.value; qtSavePrefs(); });
+  go('qtSearch', 'input', function(e){
+    var q = e.target.value.trim(), res = $t('qtRes'); if(q.length < 2){ res.innerHTML = ''; return; }
+    var hits = qoFind(q, idx, 6); res.innerHTML = hits.length ? hits.map(function(h){ return '<button type="button" data-qtadd="' + h.p.id + '">' + esc(qoOptLabel(h.p)) + '</button>'; }).join('') : '<div class="qo-hint">No match.</div>';
+  });
+  $t('qtRes').addEventListener('click', function(e){ var b = e.target.closest('button'); if(!b) return; var id = Number(b.getAttribute('data-qtadd')); if(!QT.items.some(function(x){ return x.id === id; })) QT.items.push({ id: id, qty: 1, manual: false, price: 0 }); $t('qtSearch').value = ''; $t('qtRes').innerHTML = ''; paint(); });
+  $t('qtList').addEventListener('input', function(e){ var t = e.target, i;
+    if((i = t.getAttribute('data-qtq')) !== null){ QT.items[Number(i)].qty = Math.max(1, Math.floor(Number(t.value)) || 1); qtRecalc(); var tt = qtTotals(); $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(tt.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(tt.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(tt.profit) + ' (' + tt.pct + '%)</b><div class="qt-sub">Only you see this box.</div>'; }
+    else if((i = t.getAttribute('data-qtp')) !== null){ var it = QT.items[Number(i)]; it.price = Math.max(0, Number(t.value) || 0); it.manual = true; var t2 = qtTotals(); $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(t2.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(t2.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(t2.profit) + ' (' + t2.pct + '%)</b><div class="qt-sub">Only you see this box.</div>'; } });
+  $t('qtList').addEventListener('change', function(e){ if(e.target.getAttribute('data-qtq') !== null || e.target.getAttribute('data-qtp') !== null) paint(); });
+  $t('qtList').addEventListener('click', function(e){ var b = e.target.closest('[data-qtdel]'); if(!b) return; QT.items.splice(Number(b.getAttribute('data-qtdel')), 1); paint(); });
+  go('qtPrint', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } qtPrint(); });
+  go('qtWa', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } var ph = String(QT.phone || '').replace(/\D/g, ''); if(ph.length === 10) ph = '91' + ph; window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(qtText()), '_blank'); });
+  go('qtCopy', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } try{ navigator.clipboard.writeText(qtText()); showToast('Quote copied'); }catch(e){ prompt('Copy this quote', qtText()); } });
+}
+function qtNumber(){ var k = 'ac_quote_seq_' + session, n = Number(localStorage.getItem(k) || '0') + 1; try{ localStorage.setItem(k, String(n)); }catch(e){} var d = new Date(); return 'Q' + String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(n).padStart(3, '0'); }
+function qtMeta(){ var u = getUsers()[session] || {}, d = new Date(), vt = new Date(Date.now() + QT.days * 86400000); var f = function(x){ return x.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }; return { u: u, date: f(d), valid: f(vt), no: QT.no || (QT.no = qtNumber()) }; }
+function qtText(){
+  var m = qtMeta(), t = qtTotals(), L = [];
+  L.push('*Quotation ' + m.no + '*'); L.push((m.u.business || 'Dealer') + (m.u.phone ? ' · ' + m.u.phone : '')); if(QT.customer) L.push('For: ' + QT.customer); L.push('Date: ' + m.date + ' · Valid till: ' + m.valid); L.push('');
+  QT.items.forEach(function(it, i){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return; L.push((i + 1) + '. ' + p.name + (p.size && p.name.indexOf(p.size) < 0 ? ' (' + p.size + ')' : '') + ' — ' + it.qty + ' × ' + money(it.price) + ' = ' + money(it.price * it.qty)); });
+  L.push(''); if(QT.showGst){ L.push('Taxable value: ' + money(t.taxable)); L.push('GST: ' + money(t.gst)); } L.push('*Total: ' + money(t.sell) + '*' + (QT.showGst ? '' : ' (incl. GST)'));
+  if(QT.notes) { L.push(''); L.push(QT.notes); } return L.join('\n');
+}
+function qtPrint(){
+  var m = qtMeta(), t = qtTotals(), u = m.u;
+  var rows = QT.items.map(function(it, i){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return ''; return '<tr><td>' + (i + 1) + '</td><td><b>' + esc(p.name) + '</b>' + (p.size && p.name.indexOf(p.size) < 0 ? '<br><span style="color:#555">' + esc(p.size) + '</span>' : '') + '<br><span style="color:#777;font-size:11px">' + esc(p.part) + '</span></td><td class="r">' + it.qty + '</td><td class="r">' + money(it.price) + '</td><td class="r">' + money(it.price * it.qty) + '</td></tr>'; }).join('');
+  var el = document.createElement('div'); el.className = 'acq-print';
+  el.innerHTML = '<div class="acq-doc"><div style="display:flex;justify-content:space-between;gap:12px"><div><h1>' + esc(u.business || 'Quotation') + '</h1><div>' + esc(u.address || '') + '</div><div>' + (u.phone ? 'Phone: ' + esc(u.phone) : '') + (u.gst ? ' · GSTIN: ' + esc(u.gst) : '') + '</div></div><div style="text-align:right"><div style="font-size:20px;font-weight:700;color:#17325c">QUOTATION</div><div>No: <b>' + esc(m.no) + '</b></div><div>Date: ' + esc(m.date) + '</div><div>Valid till: ' + esc(m.valid) + '</div></div></div>' +
+    (QT.customer || QT.phone ? '<div style="margin-top:12px;padding:8px 10px;background:#f4f6fb;border-radius:6px"><b>To:</b> ' + esc(QT.customer || '') + (QT.phone ? ' · ' + esc(QT.phone) : '') + '</div>' : '') +
+    '<table><thead><tr><th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    '<table style="width:300px;margin-left:auto">' + (QT.showGst ? '<tr><td>Taxable value</td><td class="r">' + money(t.taxable) + '</td></tr><tr><td>GST</td><td class="r">' + money(t.gst) + '</td></tr>' : '') + '<tr><td><b>Total' + (QT.showGst ? '' : ' (incl. GST)') + '</b></td><td class="r"><b style="font-size:16px">' + money(t.sell) + '</b></td></tr></table>' +
+    (QT.notes ? '<div style="margin-top:14px"><b>Notes</b><div style="white-space:pre-line">' + esc(QT.notes) + '</div></div>' : '') + '<div style="margin-top:16px;font-size:11px;color:#666">Prices are inclusive of GST unless stated. This quotation is valid till ' + esc(m.valid) + '. Prices may change after this date.</div></div>';
+  document.body.appendChild(el);
+  var cleanup = function(){ if(el.parentNode) el.remove(); window.removeEventListener('afterprint', cleanup); };
+  window.addEventListener('afterprint', cleanup); setTimeout(function(){ window.print(); setTimeout(cleanup, 60000); }, 150);
+  QT.no = null;
+}
+
+/* ---- dealer tools menu (one header button instead of many) ---- */
+function openDealerTools(){
+  if(!session){ showToast('Please sign in first'); return; }
+  toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🧰 Dealer tools</h3><div class="sub">Faster ordering and selling.</div></div><button type="button" class="acpay-btn ghost" id="dtX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<div class="pay-choice" style="margin-top:12px"><button type="button" class="acpay-btn ghost" id="dtQuick" style="display:block;width:100%;text-align:left;margin:6px 0">📋 <b>Quick order</b><br><span class="sub">Paste a WhatsApp / notebook list — we fill the cart</span></button>' +
+    '<button type="button" class="acpay-btn ghost" id="dtQuote" style="display:block;width:100%;text-align:left;margin:6px 0">📄 <b>Quote for my customer</b><br><span class="sub">Add your margin, print or WhatsApp a neat quote</span></button>' +
+    '<button type="button" class="acpay-btn ghost" id="dtBulk" style="display:block;width:100%;text-align:left;margin:6px 0">📤 <b>Bulk order from Excel</b><br><span class="sub">Upload a sheet of item codes and quantities</span></button></div>');
+  $t('dtX').onclick = paySheetClose; $t('dtQuick').onclick = openQuickOrder; $t('dtQuote').onclick = openQuoteMaker;
+  $t('dtBulk').onclick = function(){ paySheetClose(); var f = document.getElementById('bulkOrderFile'); if(f) f.click(); };
+}
 
 /* ================= Account panel ================= */
 function accountBodyHtml(){
@@ -3334,6 +3612,7 @@ function accountBodyHtml(){
       '<button class="btn-admin sm mt-2" id="addBusinessBtn">'+t('account.addBusiness')+'</button>' +
     '</div>';
 
+  html += monthlyCardHtml();
   if(limit > 0){
     html += '<div class="account-card mb-3">' +
         '<div class="ac-row"><span class="ac-label">'+t('account.creditLimit')+'</span><span class="ac-val">'+money(limit)+'</span></div>' +
@@ -4322,7 +4601,7 @@ function renderAdminOrders(){
     '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
       '<button class="btn-admin outline" id="btnExportFiltered"'+(filtered.length?'':' disabled')+'>⬇ Export '+(filtersActive?'filtered':'all')+' ('+filtered.length+')</button>' +
       '<button class="btn-admin outline" id="btnAutoStatusRules">⏱ Auto-Status Rules</button>' +
-      '<button class="btn-admin outline" id="btnInvoiceSettings">🧾 Invoice &amp; Payment Settings</button>' +
+      '<button class="btn-admin outline" id="btnInvoiceSettings">🧾 Invoice &amp; Payment Settings'+(SETTINGS.upiId ? '' : ' ⚠ add UPI ID')+'</button>' +
       '<button class="btn-admin outline" id="btnFullBackup">💾 Full Backup</button>' +
     '</div></div>' +
     '<div class="ord-filters">' +
@@ -4622,10 +4901,11 @@ function openInvoiceSettings(){
       '<div class="full"><label>Shop Address</label><textarea id="isAddress" rows="2">'+esc(SETTINGS.shopAddress)+'</textarea></div>' +
       '<div class="full"><label>Shop Phone</label><input type="tel" id="isPhone" value="'+esc(SETTINGS.shopPhone)+'"></div>' +
       '<div class="full" style="border-top:1px solid #e6dfcb; padding-top:10px; margin-top:6px;"><b>💳 UPI payments (free — money goes straight to your account)</b></div>' +
+      '<div class="full" style="font-size:12px; color:#52607a;">Dealers see the <b>Pay now / Pay later</b> choice at checkout only after a UPI ID is saved here. The same goes for the “Pay now” button on their orders.</div>' +
       '<div class="full"><label>Your UPI ID (VPA)</label><input type="text" id="isUpi" value="'+esc(SETTINGS.upiId||'')+'" placeholder="yourshop@okhdfcbank" autocapitalize="none"></div>' +
       '<div class="full"><label>Name shown in the UPI app</label><input type="text" id="isUpiName" value="'+esc(SETTINGS.upiName||'')+'" placeholder="Shop name"></div>' +
-      '<div class="full"><label><input type="checkbox" id="isPayNow"'+(SETTINGS.payNowOn!==false?' checked':'')+'> Offer “Pay now with UPI” at checkout</label></div>' +
-      '<div class="full"><label><input type="checkbox" id="isPayLater"'+(SETTINGS.payLaterOn!==false?' checked':'')+'> Offer “Pay later” (adds to the dealer\'s account balance)</label></div>' +
+      '<div class="full"><label style="display:flex; gap:8px; align-items:center; font-size:12.5px;"><input type="checkbox" id="isPayNow" style="width:20px; height:20px; flex:none; padding:0;"'+(SETTINGS.payNowOn!==false?' checked':'')+'> <span>Offer “Pay now with UPI” at checkout</span></label></div>' +
+      '<div class="full"><label style="display:flex; gap:8px; align-items:center; font-size:12.5px;"><input type="checkbox" id="isPayLater" style="width:20px; height:20px; flex:none; padding:0;"'+(SETTINGS.payLaterOn!==false?' checked':'')+'> <span>Offer “Pay later” (adds to the dealer\'s account balance)</span></label></div>' +
       '<div class="full"><label>Extra payment instructions (bank account details, cheque info… shown to dealers)</label><textarea id="isPayNote" rows="3">'+esc(SETTINGS.payNote||'')+'</textarea></div>' +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveInvoiceSettingsBtn" style="width:100%;">Save invoice settings</button>';
@@ -4655,6 +4935,9 @@ function openDeliverySettings(){
       '<div class="full"><label>Delivery charge below minimum (₹)</label><input type="number" id="dsCharge" value="'+(Number(SETTINGS.deliveryCharge)||0)+'" min="0" step="10"></div>' +
       '<div class="full"><label>Support Phone</label><input type="tel" id="dsPhone" value="'+esc(SETTINGS.shopPhone)+'"></div>' +
       '<div class="full"><label>Support Email</label><input type="email" id="dsEmail" value="'+esc(SETTINGS.supportEmail)+'"></div>' +
+      '<div class="full" style="border-top:1px solid #e6dfcb; padding-top:10px; margin-top:6px;"><b>🎯 Monthly order target (shown to dealers in their cart and account)</b></div>' +
+      '<div class="full"><label>Target per dealer per month (₹, 0 = off)</label><input type="number" id="dsTarget" value="'+(Number(SETTINGS.monthTarget)||0)+'" min="0" step="1000"></div>' +
+      '<div class="full"><label>What the dealer gets for reaching it (you give it manually, e.g. a credit note)</label><input type="text" id="dsReward" value="'+esc(SETTINGS.monthReward||'')+'" placeholder="e.g. Reach it and get 1% extra discount next month"></div>' +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveDeliverySettingsBtn" style="width:100%;">Save settings</button>';
   document.getElementById('saveDeliverySettingsBtn').addEventListener('click', function(){
@@ -4662,7 +4945,9 @@ function openDeliverySettings(){
       freeDeliveryMin: Number(document.getElementById('dsFreeMin').value) || 0,
       deliveryCharge: Number(document.getElementById('dsCharge').value) || 0,
       shopPhone: document.getElementById('dsPhone').value.trim(),
-      supportEmail: document.getElementById('dsEmail').value.trim()
+      supportEmail: document.getElementById('dsEmail').value.trim(),
+      monthTarget: Number(document.getElementById('dsTarget').value) || 0,
+      monthReward: document.getElementById('dsReward').value.trim()
     }));
     showToast('Home / delivery settings saved');
     deliverySettingsOffcanvas.hide();

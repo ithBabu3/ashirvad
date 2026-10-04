@@ -108,3 +108,10 @@ built-in admin password in `js/app.js` applies — testing only.
 - Confirming writes a normal ledger payment tied to the order, so the dealer's outstanding balance, partial payments and statements stay correct.
 - Orders show Paid / Part paid / Verifying / Payment due / Pay later chips; admin can filter by payment status; duplicate UTRs are flagged; Excel export includes payment columns.
 - Set it up: Admin → Orders → *Invoice & Payment Settings* → enter your UPI ID. Deploy rules: `firebase deploy --only firestore,hosting`.
+
+## v2.3.0 — dealer tools (all free-plan friendly: no extra Firestore reads/writes)
+- **🧰 Dealer tools** button in the store header: Quick order, Quote maker, Excel bulk order.
+- **Quick order**: paste a WhatsApp / notebook list ("10 x 75mm pipe", "item - 10", item codes); items are matched on the device, reviewed line by line, then added to the cart (capped to stock).
+- **Cart nudges**: free-delivery progress bar, "add N more for extra X% off" using each product's bulk slabs, credit-limit meter, optional monthly target.
+- **Monthly target** (Admin → Home / delivery settings): target ₹ and reward text, shown in the cart and the dealer's account.
+- **Quote maker**: dealer margin % + rounding, customer name/phone, notes; print / save as PDF, WhatsApp, copy text. His buying price and profit are visible only to him. Quote numbers and margin are remembered on the device only.
