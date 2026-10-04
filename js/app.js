@@ -1036,7 +1036,8 @@ var SETTINGS_DEFAULTS = {
   supportEmail:'support@ashirvadconnect.example',
   freeDeliveryMin:3000,
   deliveryCharge:150,
-  logoUrl:''
+  logoUrl:'',
+  upiId:'', upiName:'', payNowOn:true, payLaterOn:true, payNote:''
 };
 function loadSettings(){
   try{
@@ -1066,10 +1067,12 @@ function totalPayableForDealer(gst){
 function outstandingForDealer(gst){
   return Math.round((totalPayableForDealer(gst) - totalPaymentsForDealer(gst)) * 100) / 100;
 }
-function recordPayment(gst, amount, orderId, note){
+function recordPayment(gst, amount, orderId, note, extra){
   amount = Number(amount);
   if(!gst || !amount || amount <= 0) return false;
-  PAYMENTS.push({ id:nextPaymentId(), dealerGst:gst, orderId:orderId||'', amount:amount, note:note||'', date:new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) });
+  var entry = { id:nextPaymentId(), dealerGst:gst, orderId:orderId||'', amount:amount, note:note||'', date:new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) };
+  if(extra) Object.keys(extra).forEach(function(k){ if(extra[k] !== undefined && extra[k] !== '') entry[k] = extra[k]; });
+  PAYMENTS.push(entry);
   savePayments(PAYMENTS);
   return true;
 }
@@ -2679,6 +2682,7 @@ function renderOrdersView(){
         (deliveryCharge > 0 ? '<div class="oc-line"><span>'+t('cart.deliveryCharge')+'</span><span>'+money(deliveryCharge)+'</span></div>' : '') +
         '<div class="oc-line oc-total"><span>'+t('orders.payable')+'</span><span>'+money(payable)+'</span></div>' +
         (o.discount ? '<div class="discount-applied-tag">'+t('orders.newDiscount')+'</div>' : '') +
+        payDealerBlockHtml(o) +
         '<div class="ac-actions" style="margin-top:8px;">' +
           (o.status !== 'cancelled' ? '<button type="button" class="btn-admin sm outline" data-invoice="'+esc(o.id)+'">🧾 '+t('orders.invoice')+'</button>' : '') +
           '<button type="button" class="btn-admin sm outline" data-share="'+esc(o.id)+'">📤 '+t('orders.share')+'</button>' +
@@ -2697,7 +2701,7 @@ function renderOrdersView(){
           '</div>' +
           '<div class="cor-right">' +
             '<span class="status-pill st-'+esc(o.status||'placed')+'">'+orderStatusLabel(o.status)+'</span>' +
-            '<span class="cor-total">'+money(payable)+'</span>' +
+            payChipHtml(o) + '<span class="cor-total">'+money(payable)+'</span>' +
             '<button type="button" class="cor-toggle" aria-label="'+(open?'Collapse':'Expand')+'">'+(open?'▴':'▾')+'</button>' +
           '</div>' +
         '</div>' +
@@ -2994,7 +2998,7 @@ function renderCartPanel(){
     '</div>' +
     '<div class="row-total"><span>'+t('cart.total')+'</span><span>'+money(grandTotal)+'</span></div>' +
     (isDealerActive(session) ? '' : '<div class="stock-note low" style="margin:6px 0; color:var(--maroon-600); font-weight:600;">'+esc(blockedNoticeText(session))+'</div>') +
-    '<button type="button" class="btn-royal" id="placeOrderBtn"'+(isDealerActive(session) ? '' : ' disabled style="opacity:.5; cursor:not-allowed;"')+'>'+t('cart.placeOrder')+'</button>' +
+    payChoiceHtml() + '<button type="button" class="btn-royal" id="placeOrderBtn"'+(isDealerActive(session) ? '' : ' disabled style="opacity:.5; cursor:not-allowed;"')+'>'+t('cart.placeOrder')+'</button>' +
     '<button type="button" class="btn btn-link w-100 mt-2" id="continueShoppingBtn" style="color:var(--navy-900); font-weight:600; font-size:12.5px;">'+t('cart.continueShopping')+'</button>';
 
   var addrSel = document.getElementById('cartAddressSelect');
@@ -3097,6 +3101,7 @@ function placeOrder(){
     discount:null,
     discountSeen:true
   };
+  var payMode = payChoiceMode(); if(payMode) order.payMode = payMode;
   saveOrder(order);
   saveCart({});
   updateCartBadges();
@@ -3104,7 +3109,199 @@ function placeOrder(){
   cartOffcanvas.hide();
   showToast(t('toast.orderPlaced'));
   setView('orders');
+  if(payMode === 'now') setTimeout(function(){ openPaySheet(order.id); }, 350);
 }
+
+/* ================= UPI payments for orders =================
+   Free: the dealer pays YOUR UPI ID directly (no gateway, no fee). A UPI QR / "open UPI app" link carries the exact amount.
+   After paying, the dealer enters the UTR (bank reference). Admin checks the bank app / SMS and presses "Confirm received" —
+   that writes a normal ledger payment tied to the order, so the dealer's outstanding balance stays correct automatically.
+   order.payMode  'now' | 'later'              (dealer's choice at checkout)
+   order.payClaim { status:'pending'|'confirmed'|'rejected', utr, amount, via, note, at, reason }   (dealer writes 'pending' only)
+   order.payHistory [ {at, by, action, amount, utr, note} ]                                      (admin only)
+   Paid / part-paid / unpaid is ALWAYS derived from the ledger payments that carry this orderId. */
+var CART_PAY_MODE = 'now';
+function r2(n){ return Math.round((Number(n)||0) * 100) / 100; }
+function upiOn(){ return !!(SETTINGS.upiId && SETTINGS.payNowOn !== false); }
+function laterOn(){ return SETTINGS.payLaterOn !== false; }
+function orderPaid(o){ return r2(PAYMENTS.filter(function(p){ return p.orderId === o.id; }).reduce(function(s, p){ return s + Number(p.amount || 0); }, 0)); }
+function orderBalance(o){ return Math.max(0, r2(orderPayable(o) - orderPaid(o))); }
+function payState(o){
+  if(!o || o.status === 'cancelled') return 'cancelled';
+  var due = orderPayable(o), paid = orderPaid(o);
+  if(due > 0 && paid >= due - 0.5) return 'paid';
+  if(o.payClaim && o.payClaim.status === 'pending') return 'verify';
+  if(paid > 0) return 'partial';
+  if(o.payClaim && o.payClaim.status === 'rejected') return 'rejected';
+  return o.payMode === 'now' ? 'unpaid' : 'later';       // orders from before this feature (no payMode) are simply "on account"
+}
+var PAY_TXT = { paid: '✔ Paid', partial: 'Part paid', verify: '⏳ Verifying', unpaid: 'Payment due', later: 'Pay later', rejected: 'Payment not found' };
+function payChipHtml(o){ var s = payState(o); return s === 'cancelled' ? '' : '<span class="pay-chip pay-' + s + '">' + PAY_TXT[s] + '</span>'; }
+function payFilterKey(o){ var s = payState(o); return s === 'rejected' ? 'unpaid' : s; }
+function payVerifyCount(){ return getAllOrders().filter(function(o){ return payState(o) === 'verify'; }).length; }
+function upiLink(amount, orderId){
+  var enc = encodeURIComponent;
+  return 'upi://pay?pa=' + enc(SETTINGS.upiId) + '&pn=' + enc(SETTINGS.upiName || SETTINGS.shopName || 'Shop') + '&am=' + Number(amount).toFixed(2) + '&cu=INR&tn=' + enc('Order ' + orderId);
+}
+function utrUsedElsewhere(utr, orderId){
+  var u = String(utr || '').toUpperCase(); if(!u) return false;
+  return PAYMENTS.some(function(p){ return p.orderId !== orderId && String(p.utr || '').toUpperCase() === u; }) ||
+         getAllOrders().some(function(o){ return o.id !== orderId && o.payClaim && String(o.payClaim.utr || '').toUpperCase() === u; });
+}
+(function(){ if(document.getElementById('acPayCss')) return; var st = document.createElement('style'); st.id = 'acPayCss';
+  st.textContent = [
+  '.pay-chip{display:inline-block;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:700;white-space:nowrap}',
+  '.pay-paid{background:#e4f5ea;color:#1e7b46}.pay-partial{background:#fff3d6;color:#8a5a00}.pay-verify{background:#e7f0ff;color:#2b4f9e}',
+  '.pay-unpaid,.pay-rejected{background:#fde8e8;color:#b23b3b}.pay-later{background:#eceff4;color:#52607a}',
+  '.pay-block{background:#f7f9fd;border:1px solid #dbe4f4;border-radius:12px;padding:10px 12px;margin-top:10px;font-size:13px}',
+  '.pay-block .pb-row{display:flex;justify-content:space-between;padding:2px 0}.pay-block .pb-msg{margin-top:6px;font-size:12.5px;color:#44506a}',
+  '.pay-choice{border:1.5px solid #dbe4f4;border-radius:12px;padding:10px 12px;margin:8px 0}.pay-choice .pc-t{font-weight:700;margin-bottom:6px}',
+  '.pay-choice label{display:block;border:1.5px solid #d8dbe3;border-radius:10px;padding:8px 10px;margin:6px 0;cursor:pointer;font-size:13px}',
+  '.pay-choice label.on{border-color:#17325c;background:#f3f6fc}.pay-choice small{display:block;color:#6b7280;font-size:11.5px;margin-top:2px}',
+  '.acpay-ov{position:fixed;inset:0;z-index:20050;background:rgba(10,19,34,.6);display:flex;align-items:flex-end;justify-content:center}',
+  '.acpay-sheet{background:#fff;width:100%;max-width:460px;max-height:94vh;overflow:auto;border-radius:20px 20px 0 0;padding:16px 16px calc(18px + env(safe-area-inset-bottom))}',
+  '@media(min-width:620px){.acpay-ov{align-items:center}.acpay-sheet{border-radius:20px}}',
+  '.acpay-sheet h3{margin:0 0 2px;font-size:18px}.acpay-sheet .sub{font-size:12.5px;color:#6b7280}',
+  '.acpay-amt{font-size:30px;font-weight:800;color:#17325c;margin:6px 0}.acpay-qr{display:flex;justify-content:center;margin:8px 0}',
+  '.acpay-sheet label.l{display:block;font-size:12px;font-weight:600;color:#4b5563;margin:10px 0 4px}',
+  '.acpay-sheet input,.acpay-sheet select,.acpay-sheet textarea{width:100%;padding:10px 12px;border:1.5px solid #d8dbe3;border-radius:10px;font-size:16px}',
+  '.acpay-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.acpay-row>*{flex:1}',
+  '.acpay-btn{border:0;border-radius:12px;padding:12px 14px;font-weight:700;background:#17325c;color:#fff;font-size:14px;cursor:pointer;text-align:center;text-decoration:none;display:inline-block}',
+  '.acpay-btn.gold{background:#c9a24b;color:#241c05}.acpay-btn.ghost{background:#fff;color:#17325c;border:1.5px solid #cdd6e6}.acpay-btn.red{background:#b23b3b}.acpay-btn.green{background:#1e7b46}.acpay-btn:disabled{opacity:.5}',
+  '.acpay-err{color:#b23b3b;font-size:12.5px;min-height:16px;margin-top:6px}.acpay-hist{font-size:12px;color:#52607a;margin-top:6px}'
+  ].join('\n'); document.head.appendChild(st); })();
+function paySheet(html){ paySheetClose(); var w = document.createElement('div'); w.id = 'acPaySheet'; w.className = 'acpay-ov'; w.innerHTML = '<div class="acpay-sheet">' + html + '</div>'; w.addEventListener('mousedown', function(e){ if(e.target === w) paySheetClose(); }); document.body.appendChild(w); return w; }
+function paySheetClose(){ var w = document.getElementById('acPaySheet'); if(w) w.remove(); }
+
+/* ---- checkout: Pay now / Pay later ---- */
+function payChoiceModes(){ var m = []; if(!upiOn()) return m; m.push('now'); if(laterOn()) m.push('later'); return m; }   // no UPI ID set -> the old behaviour, no choice shown
+function payChoiceHtml(){
+  var modes = payChoiceModes(); if(!modes.length) return '';
+  if(modes.indexOf(CART_PAY_MODE) < 0) CART_PAY_MODE = modes[0];
+  var opt = function(k, title, sub){ return '<label class="' + (CART_PAY_MODE === k ? 'on' : '') + '"><input type="radio" name="acPayMode" value="' + k + '"' + (CART_PAY_MODE === k ? ' checked' : '') + '> <b>' + title + '</b><small>' + sub + '</small></label>'; };
+  return '<div class="pay-choice"><div class="pc-t">💳 Payment</div>' +
+    (modes.indexOf('now') >= 0 ? opt('now', 'Pay now with UPI', 'A QR code and “Open UPI app” button appear right after you place the order.') : '') +
+    (modes.indexOf('later') >= 0 ? opt('later', 'Pay later', 'The amount is added to your account. Pay any time from My Orders.') : '') + '</div>';
+}
+function payChoiceMode(){ var m = payChoiceModes(); if(!m.length) return null; return m.indexOf(CART_PAY_MODE) >= 0 ? CART_PAY_MODE : m[0]; }
+
+/* ---- dealer: order card block + pay sheet ---- */
+function payDealerBlockHtml(o){
+  var s = payState(o); if(s === 'cancelled') return '';
+  var due = orderPayable(o), paid = orderPaid(o), bal = orderBalance(o), cl = o.payClaim || {};
+  var msg = s === 'verify' ? 'You told us you paid ' + money(cl.amount) + (cl.utr ? ' (ref ' + esc(cl.utr) + ')' : '') + '. We will confirm once we see it in our account.' :
+            s === 'rejected' ? '⚠ We could not find that payment' + (cl.reason ? ' — ' + esc(cl.reason) : '') + '. Please check the reference and send it again.' :
+            s === 'paid' ? 'Thank you — payment received.' : s === 'later' ? 'You chose to pay later. Pay whenever you are ready.' : '';
+  var canPay = bal > 0 && (upiOn() || SETTINGS.payNote);
+  return '<div class="pay-block"><div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div>' +
+    (paid > 0 ? '<div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div>' : '') +
+    (bal > 0 ? '<div class="pb-row"><span>Balance</span><b style="color:#b23b3b">' + money(bal) + '</b></div>' : '') +
+    (msg ? '<div class="pb-msg">' + msg + '</div>' : '') +
+    (canPay ? '<button type="button" class="btn-royal" style="margin-top:8px;padding:9px 14px;font-size:13.5px" data-pay-open="' + esc(o.id) + '">' + (s === 'verify' ? '✏ Update payment details' : '💳 Pay ' + money(bal) + ' now') + '</button>' : '') + '</div>';
+}
+function openPaySheet(orderId){
+  var o = findOrder(orderId); if(!o) return;
+  var bal = orderBalance(o); if(bal <= 0){ showToast('This order is already paid ✔'); return; }
+  var cl = o.payClaim && o.payClaim.status !== 'confirmed' ? o.payClaim : {};
+  var link = upiOn() ? upiLink(bal, o.id) : '';
+  paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>Pay for order #' + esc(o.id) + '</h3><div class="sub">' + esc(SETTINGS.upiName || SETTINGS.shopName || '') + '</div></div><button type="button" class="acpay-btn ghost" id="apyX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<div class="acpay-amt">' + money(bal) + '</div>' +
+    (upiOn() ?
+      '<div class="acpay-qr" id="apyQr"></div><div class="sub" style="text-align:center">Scan with any UPI app (GPay, PhonePe, Paytm…) — the amount is filled in for you.</div>' +
+      '<div class="acpay-row"><a class="acpay-btn gold" href="' + esc(link) + '" id="apyOpen">📱 Open UPI app</a><button type="button" class="acpay-btn ghost" id="apyCopy">Copy UPI ID</button></div>' +
+      '<div class="sub" style="text-align:center;margin-top:6px">UPI ID: <b>' + esc(SETTINGS.upiId) + '</b></div>' : '') +
+    (SETTINGS.payNote ? '<div class="pay-block" style="white-space:pre-line">' + esc(SETTINGS.payNote) + '</div>' : '') +
+    '<div style="border-top:1px solid #eee;margin-top:14px;padding-top:6px"><b>After you have paid</b><div class="sub">Enter the reference number (UTR / transaction ID) shown in your UPI app, so we can match it.</div></div>' +
+    '<label class="l">Amount you paid (₹)</label><input id="apyAmt" type="number" inputmode="decimal" min="1" step="any" value="' + (cl.amount || bal) + '">' +
+    '<label class="l">UTR / reference no. *</label><input id="apyUtr" autocapitalize="characters" autocomplete="off" placeholder="e.g. 412345678901" value="' + esc(cl.utr || '') + '">' +
+    '<label class="l">Paid via</label><select id="apyVia"><option value="UPI">UPI</option><option value="Bank transfer">Bank transfer (NEFT / IMPS)</option><option value="Cash">Cash handed over</option></select>' +
+    '<label class="l">Note (optional)</label><input id="apyNote" value="' + esc(cl.note || '') + '">' +
+    '<div class="acpay-err" id="apyErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="apyLater">Pay later</button><button type="button" class="acpay-btn green" id="apySend">✔ I have paid</button></div>');
+  var $ = function(id){ return document.getElementById(id); };
+  if(upiOn()){ try{ renderQRInto('apyQr', link, 190); }catch(e){} $('apyCopy').onclick = function(){ try{ navigator.clipboard.writeText(SETTINGS.upiId); showToast('UPI ID copied'); }catch(e){ prompt('Copy this UPI ID', SETTINGS.upiId); } }; }
+  $('apyX').onclick = paySheetClose; $('apyLater').onclick = paySheetClose;
+  $('apySend').onclick = function(){
+    var amt = r2($('apyAmt').value), utr = $('apyUtr').value.trim().replace(/\s+/g, ''), err = $('apyErr'); err.textContent = '';
+    if(!(amt > 0)){ err.textContent = 'Enter the amount you paid.'; return; }
+    if(amt > bal + 1){ err.textContent = 'That is more than the balance (' + money(bal) + ').'; return; }
+    if($('apyVia').value !== 'Cash' && !/^[A-Za-z0-9\-]{6,30}$/.test(utr)){ err.textContent = 'Enter the UTR / reference number (6–30 letters or numbers).'; return; }
+    if(utr && utrUsedElsewhere(utr, o.id) && !confirm('This reference number was already used on another order. Send anyway?')) return;
+    var fresh = findOrder(o.id); if(!fresh) return;
+    fresh.payMode = fresh.payMode || 'now';
+    fresh.payClaim = { status: 'pending', via: $('apyVia').value, utr: utr, amount: amt, note: $('apyNote').value.trim(), at: Date.now() };
+    saveOrder(fresh); paySheetClose(); showToast('Thanks! We will confirm your payment shortly.');
+    var ph = String(SETTINGS.shopPhone || '').replace(/\D/g, ''); if(ph.length === 10) ph = '91' + ph;
+    if(ph && confirm('Also send this payment note to us on WhatsApp? (optional, speeds things up)')) window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent('Payment sent for order #' + fresh.id + ': ' + money(amt) + ' via ' + $('apyVia').value + (utr ? ', ref ' + utr : '')), '_blank');
+    if(typeof renderOrdersView === 'function' && !adminSession) renderOrdersView();
+  };
+}
+
+/* ---- admin: payment panel in the order details, confirm / reject / record ---- */
+function adminPayPanelHtml(o){
+  if(o.status === 'cancelled') return '';
+  var s = payState(o), due = orderPayable(o), paid = orderPaid(o), bal = orderBalance(o), cl = o.payClaim || {};
+  var pays = PAYMENTS.filter(function(p){ return p.orderId === o.id; });
+  var claim = (cl.status === 'pending') ? '<div class="pay-block" style="background:#eef3ff;border-color:#c9d8ff"><b>⏳ Dealer says he paid ' + money(cl.amount) + '</b>' + (cl.via ? ' via ' + esc(cl.via) : '') + '<div class="pb-msg">Reference: <b>' + esc(cl.utr || '—') + '</b> · ' + new Date(cl.at || 0).toLocaleString('en-IN') + (cl.note ? '<br>Note: ' + esc(cl.note) : '') +
+    (utrUsedElsewhere(cl.utr, o.id) ? '<br><b style="color:#b23b3b">⚠ This reference number appears on another order.</b>' : '') + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn-admin sm" data-pay-confirm="' + esc(o.id) + '">✔ Confirm received</button><button type="button" class="btn-admin sm maroon" data-pay-reject="' + esc(o.id) + '">✕ Not received</button></div></div>' : '';
+  return '<div class="pay-block" style="margin:8px 12px"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
+    '<div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div><div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div><div class="pb-row"><span>Balance</span><b style="color:' + (bal > 0 ? '#b23b3b' : '#1e7b46') + '">' + money(bal) + '</b></div>' +
+    '<div class="pb-msg">Dealer chose: <b>' + (o.payMode === 'later' ? 'Pay later' : o.payMode === 'now' ? 'Pay now' : '—') + '</b></div>' + claim +
+    (pays.length ? '<div class="acpay-hist"><b>Received payments</b><br>' + pays.map(function(p){ return '• ' + money(p.amount) + ' · ' + esc(p.date || '') + (p.method ? ' · ' + esc(p.method) : '') + (p.utr ? ' · ref ' + esc(p.utr) : '') + (p.by ? ' · by ' + esc(p.by) : ''); }).join('<br>') + '</div>' : '') +
+    ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') +
+    (bal > 0 ? '<div style="margin-top:8px"><button type="button" class="btn-admin sm outline" data-pay-record="' + esc(o.id) + '">＋ Record a payment (cash / bank / UPI)</button></div>' : '') + '</div>';
+}
+function payAdminName(){ return (window.AC_CLOUD && AC_CLOUD.staffName) || localStorage.getItem('ac_admin_user') || 'admin'; }
+function openPayRecordSheet(orderId, fromClaim){
+  var o = findOrder(orderId); if(!o) return;
+  var bal = orderBalance(o), cl = fromClaim ? (o.payClaim || {}) : {};
+  paySheet('<h3>' + (fromClaim ? 'Confirm payment received' : 'Record a payment') + '</h3><div class="sub">Order #' + esc(o.id) + ' · ' + esc(o.dealerBusiness || o.dealerGst) + ' · balance ' + money(bal) + '</div>' +
+    '<label class="l">Amount received (₹)</label><input id="apyAmt" type="number" step="any" min="1" value="' + (cl.amount || bal) + '">' +
+    '<label class="l">Method</label><select id="apyVia">' + ['UPI', 'Bank transfer', 'Cash', 'Cheque'].map(function(m){ return '<option' + (cl.via === m ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' +
+    '<label class="l">UTR / reference no.</label><input id="apyUtr" value="' + esc(cl.utr || '') + '"><label class="l">Note</label><input id="apyNote">' +
+    '<div class="acpay-err" id="apyErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="apyX">Cancel</button><button type="button" class="acpay-btn green" id="apyOk">✔ Save payment</button></div>');
+  var $ = function(id){ return document.getElementById(id); };
+  $('apyX').onclick = paySheetClose;
+  $('apyOk').onclick = function(){
+    var amt = r2($('apyAmt').value), utr = $('apyUtr').value.trim(), err = $('apyErr'); err.textContent = '';
+    if(!(amt > 0)){ err.textContent = 'Enter the amount.'; return; }
+    if(amt > bal + 0.5 && !confirm('This is more than the balance (' + money(bal) + '). Record anyway?')) return;
+    if(utr && utrUsedElsewhere(utr, o.id) && !confirm('This reference number is already on another order/payment. Record anyway?')) return;
+    var by = payAdminName(), fresh = findOrder(o.id);
+    recordPayment(fresh.dealerGst, amt, fresh.id, 'Order #' + fresh.id + (utr ? ' · ref ' + utr : ''), { utr: utr, method: $('apyVia').value, by: by, orderRef: fresh.id });
+    if(fresh.payClaim && fresh.payClaim.status === 'pending') fresh.payClaim.status = 'confirmed';
+    fresh.payHistory = (fresh.payHistory || []).concat([{ at: Date.now(), by: by, action: fromClaim ? 'Confirmed received' : 'Payment recorded', amount: amt, utr: utr, note: $('apyNote').value.trim() }]);
+    saveOrder(fresh); logAudit('Payment received', '#' + fresh.id + ' · ' + money(amt) + (utr ? ' · ref ' + utr : '') + ' · ' + $('apyVia').value);
+    paySheetClose(); showToast('Payment recorded ✔'); if(adminSession) renderAdminOrders();
+  };
+}
+function payRejectClaim(orderId){
+  var o = findOrder(orderId); if(!o || !o.payClaim) return;
+  var why = prompt('Why was it not received? (shown to the dealer, optional)', 'Not seen in our account yet'); if(why === null) return;
+  o.payClaim.status = 'rejected'; o.payClaim.reason = why;
+  o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: 'Marked not received', amount: o.payClaim.amount, utr: o.payClaim.utr, note: why }]);
+  saveOrder(o); logAudit('Payment not received', '#' + o.id + (o.payClaim.utr ? ' · ref ' + o.payClaim.utr : '')); showToast('Dealer will see it as not received'); if(adminSession) renderAdminOrders();
+}
+function updatePayBadge(){
+  var b = document.querySelector('.admin-tabs button[data-atab="orders"]'); if(!b) return;
+  if(!b.getAttribute('data-base')) b.setAttribute('data-base', b.textContent.replace(/\s*\(\d+💳\)$/, ''));
+  var n = payVerifyCount(); b.textContent = b.getAttribute('data-base') + (n ? ' (' + n + '💳)' : '');
+}
+document.addEventListener('click', function(e){
+  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-record],[data-payfilter]') : null; if(!t) return;
+  var v;
+  if((v = t.getAttribute('data-pay-open'))){ e.stopPropagation(); openPaySheet(v); }
+  else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); openPayRecordSheet(v, true); }
+  else if((v = t.getAttribute('data-pay-record'))){ e.stopPropagation(); openPayRecordSheet(v, false); }
+  else if((v = t.getAttribute('data-pay-reject'))){ e.stopPropagation(); payRejectClaim(v); }
+  else if((v = t.getAttribute('data-payfilter'))){ ORDER_UI.pay = ORDER_UI.pay === v ? 'all' : v; ORDER_UI.page = 1; renderAdminOrders(); }
+}, true);
+document.addEventListener('change', function(e){
+  var t = e.target;
+  if(t && t.name === 'acPayMode'){ CART_PAY_MODE = t.value; var lab = t.closest('.pay-choice'); if(lab) lab.querySelectorAll('label').forEach(function(l){ l.classList.toggle('on', l.querySelector('input').checked); }); }
+  else if(t && t.id === 'ordPayFilter'){ ORDER_UI.pay = t.value; ORDER_UI.page = 1; renderAdminOrders(); }
+});
+setInterval(function(){ if(adminSession) updatePayBadge(); }, 20000);
 
 /* ================= Account panel ================= */
 function accountBodyHtml(){
@@ -3798,6 +3995,7 @@ function getFilteredAdminOrders(){
   var list = all.filter(function(e){
     var o = e.o;
     if(currentOrderFilter !== 'all' && o.status !== currentOrderFilter) return false;
+    if((ORDER_UI.pay || 'all') !== 'all' && payFilterKey(o) !== ORDER_UI.pay) return false;
     if(bounds){ var ts = Number(o.createdAt)||0; if(ts < bounds[0] || ts > bounds[1]) return false; }
     if(terms.length && !orderMatchesQuery(o, terms)) return false;
     return true;
@@ -3872,7 +4070,8 @@ function autoStatusRowHtml(o){
       '</div>' +
     '</div>';
 }
-function orderDetailHtml(o){
+function orderDetailHtml(o){ return orderDetailHtml0(o) + adminPayPanelHtml(o); }
+function orderDetailHtml0(o){
   var discAmt = orderDiscountAmount(o);
   var payable = orderPayable(o);
   var canCancel = o.status !== 'delivered' && o.status !== 'cancelled';
@@ -4101,12 +4300,13 @@ function renderAdminOrders(){
     { key:'delivered', lbl:'Delivered', val:counts.delivered||0 },
     { key:'cancelled', lbl:'Cancelled', val:counts.cancelled||0 },
     { key:'__revenue', lbl:'Revenue (net)', val:money(revenue) },
-    { key:'__today', lbl:"Today's orders / revenue", val:todayOrders+' · '+money(todayRevenue) }
+    { key:'__today', lbl:"Today's orders / revenue", val:todayOrders+' · '+money(todayRevenue) },
+    { key:'__verify', lbl:'💳 Payments to verify', val:payVerifyCount() }
   ];
   var statHtml = '<div class="stat-grid">' + statTiles.map(function(st){
     var isSpecial = st.key.indexOf('__') === 0;
     var active = !isSpecial && currentOrderFilter === st.key;
-    return '<div class="stat-card'+(active?' active-filter':'')+'" '+(isSpecial?'':'data-filter="'+st.key+'"')+'>' +
+    return '<div class="stat-card'+(active?' active-filter':'')+'" '+(isSpecial?(st.key==='__verify'?'data-payfilter="verify" style="cursor:pointer"':''):'data-filter="'+st.key+'"')+'>' +
       '<div class="sc-val">'+st.val+'</div><div class="sc-lbl">'+st.lbl+'</div></div>';
   }).join('') + '</div>';
 
@@ -4116,13 +4316,13 @@ function renderAdminOrders(){
   var from = (ORDER_UI.page - 1) * ORDER_UI.pageSize;
   var pageOrders = filtered.slice(from, from + ORDER_UI.pageSize);
   var selIds = Object.keys(ORDER_UI.selected).filter(function(k){ return ORDER_UI.selected[k]; });
-  var filtersActive = (ORDER_SEARCH||'').trim() || currentOrderFilter !== 'all' || ORDER_UI.range !== 'all';
+  var filtersActive = (ORDER_SEARCH||'').trim() || currentOrderFilter !== 'all' || ORDER_UI.range !== 'all' || (ORDER_UI.pay||'all') !== 'all';
 
   var toolbar = '<div class="admin-toolbar"><h2>Orders <span class="ac-sub" style="font-weight:400;">· '+filtered.length+(filtered.length!==everything.length?' of '+everything.length:'')+' shown</span></h2>' +
     '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
       '<button class="btn-admin outline" id="btnExportFiltered"'+(filtered.length?'':' disabled')+'>⬇ Export '+(filtersActive?'filtered':'all')+' ('+filtered.length+')</button>' +
       '<button class="btn-admin outline" id="btnAutoStatusRules">⏱ Auto-Status Rules</button>' +
-      '<button class="btn-admin outline" id="btnInvoiceSettings">🧾 Invoice Settings</button>' +
+      '<button class="btn-admin outline" id="btnInvoiceSettings">🧾 Invoice &amp; Payment Settings</button>' +
       '<button class="btn-admin outline" id="btnFullBackup">💾 Full Backup</button>' +
     '</div></div>' +
     '<div class="ord-filters">' +
@@ -4132,6 +4332,8 @@ function renderAdminOrders(){
       (ORDER_UI.range==='custom' ? '<input type="date" id="ordFrom" value="'+esc(ORDER_UI.from)+'"><span class="ac-sub">to</span><input type="date" id="ordTo" value="'+esc(ORDER_UI.to)+'">' : '') +
       '<select id="ordSort">' + [['newest','Newest first'],['oldest','Oldest first'],['high','Highest value'],['low','Lowest value']].map(function(r){
         return '<option value="'+r[0]+'"'+(ORDER_UI.sort===r[0]?' selected':'')+'>'+r[1]+'</option>'; }).join('') + '</select>' +
+      '<select id="ordPayFilter">' + [['all','All payments'],['verify','💳 To verify'],['unpaid','Unpaid'],['partial','Part paid'],['paid','Paid'],['later','Pay later']].map(function(r){
+        return '<option value="'+r[0]+'"'+((ORDER_UI.pay||'all')===r[0]?' selected':'')+'>'+r[1]+'</option>'; }).join('') + '</select>' +
       '<select id="ordPageSize">' + [20,50,100].map(function(n){ return '<option value="'+n+'"'+(ORDER_UI.pageSize===n?' selected':'')+'>'+n+' / page</option>'; }).join('') + '</select>' +
       (filtersActive ? '<button class="btn-admin sm outline" id="ordClear">✕ Clear filters</button>' : '') +
     '</div>';
@@ -4161,7 +4363,7 @@ function renderAdminOrders(){
           '<div data-toggle-order="'+esc(o.id)+'" style="cursor:pointer; min-width:0;"><div class="ord-id">#'+esc(o.id)+' · '+esc(o.dealerBusiness||o.dealerGst)+'</div>' +
             '<div class="ac-sub"><span class="ord-gstlink" data-ord-dealer="'+esc(o.dealerGst)+'" title="Show all orders of this dealer">'+esc(o.dealerGst)+'</span> · '+esc(o.date)+'</div></div>' +
           '<div class="ord-items">'+o.items.length+' item'+(o.items.length===1?'':'s')+'</div>' +
-          '<div class="ord-pay"><b>'+money(orderPayable(o))+'</b></div>' +
+          '<div class="ord-pay"><b>'+money(orderPayable(o))+'</b><div>'+payChipHtml(o)+'</div></div>' +
           '<span class="status-pill st-'+esc(o.status)+'">'+esc(o.status.charAt(0).toUpperCase()+o.status.slice(1))+'</span>' +
           '<div class="ord-actions">' +
             (next ? '<button class="btn-admin sm" data-advance="'+esc(o.id)+'">Mark '+next.charAt(0).toUpperCase()+next.slice(1)+'</button>' : '') +
@@ -4177,6 +4379,7 @@ function renderAdminOrders(){
   adminMain.innerHTML = statHtml + toolbar + bulkBar + listHtml;
   wireAdminOrders();
   wireOrderListUi(filtered, pageOrders, selIds);
+  updatePayBadge();
 }
 function exportOrdersExcel(list, label){
   if(!list.length){ showToast('No orders to export'); return; }
@@ -4408,7 +4611,7 @@ function wireAdminOrders(){
   if(backupBtn) backupBtn.addEventListener('click', exportFullBackup);
 }
 function openInvoiceSettings(){
-  document.getElementById('invoiceSettingsOffcanvasTitle').textContent = 'Invoice Settings';
+  document.getElementById('invoiceSettingsOffcanvasTitle').textContent = 'Invoice & Payment Settings';
   var body = document.getElementById('invoiceSettingsOffcanvasBody');
   body.innerHTML =
     '<div class="admin-form-grid">' +
@@ -4418,6 +4621,12 @@ function openInvoiceSettings(){
       '<div class="full"><label>Shop GSTIN</label><input type="text" id="isGstin" value="'+esc(SETTINGS.shopGstin)+'"></div>' +
       '<div class="full"><label>Shop Address</label><textarea id="isAddress" rows="2">'+esc(SETTINGS.shopAddress)+'</textarea></div>' +
       '<div class="full"><label>Shop Phone</label><input type="tel" id="isPhone" value="'+esc(SETTINGS.shopPhone)+'"></div>' +
+      '<div class="full" style="border-top:1px solid #e6dfcb; padding-top:10px; margin-top:6px;"><b>💳 UPI payments (free — money goes straight to your account)</b></div>' +
+      '<div class="full"><label>Your UPI ID (VPA)</label><input type="text" id="isUpi" value="'+esc(SETTINGS.upiId||'')+'" placeholder="yourshop@okhdfcbank" autocapitalize="none"></div>' +
+      '<div class="full"><label>Name shown in the UPI app</label><input type="text" id="isUpiName" value="'+esc(SETTINGS.upiName||'')+'" placeholder="Shop name"></div>' +
+      '<div class="full"><label><input type="checkbox" id="isPayNow"'+(SETTINGS.payNowOn!==false?' checked':'')+'> Offer “Pay now with UPI” at checkout</label></div>' +
+      '<div class="full"><label><input type="checkbox" id="isPayLater"'+(SETTINGS.payLaterOn!==false?' checked':'')+'> Offer “Pay later” (adds to the dealer\'s account balance)</label></div>' +
+      '<div class="full"><label>Extra payment instructions (bank account details, cheque info… shown to dealers)</label><textarea id="isPayNote" rows="3">'+esc(SETTINGS.payNote||'')+'</textarea></div>' +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveInvoiceSettingsBtn" style="width:100%;">Save invoice settings</button>';
   document.getElementById('saveInvoiceSettingsBtn').addEventListener('click', function(){
@@ -4426,7 +4635,9 @@ function openInvoiceSettings(){
       logoUrl: document.getElementById('isLogo').value.trim(),
       shopGstin: document.getElementById('isGstin').value.trim(),
       shopAddress: document.getElementById('isAddress').value.trim(),
-      shopPhone: document.getElementById('isPhone').value.trim()
+      shopPhone: document.getElementById('isPhone').value.trim(),
+      upiId: document.getElementById('isUpi').value.trim(), upiName: document.getElementById('isUpiName').value.trim(),
+      payNowOn: document.getElementById('isPayNow').checked, payLaterOn: document.getElementById('isPayLater').checked, payNote: document.getElementById('isPayNote').value.trim()
     }));
     showToast('Invoice settings saved');
     applyBranding();
@@ -7452,7 +7663,11 @@ function orderExportRow(o){
     'Discount Amount (₹)': discAmt,
     'Delivery Charge (₹)': Number(o.deliveryCharge)||0,
     'Delivery Address': o.deliveryAddress || '',
-    'Amount Payable (₹)': orderPayable(o)
+    'Amount Payable (₹)': orderPayable(o),
+    'Payment status': (PAY_TXT[payState(o)] || '').replace(/^[^A-Za-z]+/, ''),
+    'Payment mode chosen': o.payMode === 'now' ? 'Pay now (UPI)' : o.payMode === 'later' ? 'Pay later' : '',
+    'Amount received (₹)': orderPaid(o),
+    'Balance (₹)': orderBalance(o)
   });
   return base;
 }

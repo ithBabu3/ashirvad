@@ -101,3 +101,10 @@ built-in admin password in `js/app.js` applies — testing only.
 - **Delete data / Factory reset**: choose exactly what to wipe (orders, dealers, catalogue, distributors, audit log, settings, staff) or everything.
   Needs your admin password + typing the confirmation word; optional automatic backup download first; login IDs are freed so names can be reused.
 - Deploy: `firebase deploy --only firestore,hosting` (no new rules needed for this version).
+
+## v2.2.0 — UPI payments for orders (free)
+- Checkout: **Pay now with UPI** or **Pay later**. Pay now opens a QR + "Open UPI app" button with the exact amount (works with any UPI app, no gateway, no fee).
+- The dealer enters the UTR / reference and taps *I have paid*. Admin sees **💳 Payments to verify**, checks the bank app / SMS and presses **Confirm received** or **Not received**.
+- Confirming writes a normal ledger payment tied to the order, so the dealer's outstanding balance, partial payments and statements stay correct.
+- Orders show Paid / Part paid / Verifying / Payment due / Pay later chips; admin can filter by payment status; duplicate UTRs are flagged; Excel export includes payment columns.
+- Set it up: Admin → Orders → *Invoice & Payment Settings* → enter your UPI ID. Deploy rules: `firebase deploy --only firestore,hosting`.

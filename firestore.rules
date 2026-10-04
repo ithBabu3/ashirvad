@@ -44,6 +44,9 @@ service cloud.firestore {
                                   && request.auth.token.email.matches('.*@dealer[.]ashirvadconnect[.]app'); }
     function myPhone()   { return request.auth.token.email.split('@')[0]; }
     function mine(data)  { return isDealer() && data.accountKey == myPhone(); }
+    // payment claims: a dealer may only ever write a 'pending' claim; confirmations live in the admin-only ledger and payHistory
+    function payClaimOk() { return !changes(['payClaim']) || request.resource.data.payClaim.status == 'pending'; }
+    function payCreateOk(d) { return !('payClaim' in d) || d.payClaim.status == 'pending'; }
     function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasAny(keys); }
 
     // ---- who is an admin (read-only from the app; only the setup script can add admins) ----
@@ -129,11 +132,12 @@ service cloud.firestore {
       allow read: if isAdmin() || mine(resource.data);
       allow create: if canWrite() || (mine(request.resource.data)
                         && exists(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst))
-                        && get(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst)).data.accountKey == myPhone());
+                        && get(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst)).data.accountKey == myPhone()
+                        && payCreateOk(request.resource.data) && !('payHistory' in request.resource.data));
       // a dealer can cancel / mark seen / trigger an invoice number — but never change what was ordered or the price
       allow update: if canWrite() || (mine(resource.data)
                         && request.resource.data.accountKey == resource.data.accountKey
-                        && !changes(['items','total','deliveryCharge','dealerGst','id','discount','createdAt'])
+                        && !changes(['items','total','deliveryCharge','dealerGst','id','discount','createdAt','payHistory']) && payClaimOk()
                         && !(changes(['invoiceNo']) && 'invoiceNo' in resource.data));
       allow delete: if canWrite();
     }
