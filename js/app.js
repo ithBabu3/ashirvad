@@ -3134,7 +3134,7 @@ function renderCartPanel(){
     (deliveryCharge > 0 ? '<div class="row-line"><span>'+t('cart.deliveryCharge')+'</span><span>'+money(deliveryCharge)+'</span></div>' : '') +
     '<div class="row-total"><span>'+t('cart.total')+'</span><span>'+money(grandTotal)+'</span></div>' +
     (isDealerActive(session) ? '' : '<div class="stock-note low" style="margin:6px 0; color:var(--maroon-600); font-weight:600;">'+esc(blockedNoticeText(session))+'</div>') +
-    payChoiceHtml() + '<button type="button" class="btn-royal" id="placeOrderBtn"'+(isDealerActive(session) ? '' : ' disabled style="opacity:.5; cursor:not-allowed;"')+'>'+t('cart.placeOrder')+'</button>' +
+    '<button type="button" class="btn-royal" id="placeOrderBtn"'+(isDealerActive(session) ? '' : ' disabled style="opacity:.5; cursor:not-allowed;"')+'>'+t('cart.placeOrder')+'</button>' +
     '<button type="button" class="btn btn-link w-100 mt-2" id="continueShoppingBtn" style="color:var(--navy-900); font-weight:600; font-size:12.5px;">'+t('cart.continueShopping')+'</button>';
 
   var addrSel = document.getElementById('cartAddressSelect');
@@ -3239,7 +3239,6 @@ function placeOrder(){
     discount:null,
     discountSeen:true
   };
-  var payMode = payChoiceMode(); if(payMode) order.payMode = payMode;
   saveOrder(order);
   saveCart({});
   updateCartBadges();
@@ -3247,7 +3246,7 @@ function placeOrder(){
   cartOffcanvas.hide();
   showToast(t('toast.orderPlaced'));
   setView('orders');
-  if(payMode === 'now') setTimeout(function(){ openPaySheet(order.id); }, 350);
+  if(payChoiceModes().length) setTimeout(function(){ askPayAfterOrder(order.id); }, 350);   // pay now / pay later is asked only once the order is placed
 }
 
 /* ================= UPI payments for orders =================
@@ -3338,6 +3337,21 @@ function payChoiceHtml(){
 }
 function payChoiceMode(){ var m = payChoiceModes(); if(!m.length) return null; return m.indexOf(CART_PAY_MODE) >= 0 ? CART_PAY_MODE : m[0]; }
 
+/* ---- after the order is placed: ask how the dealer wants to pay ---- */
+function askPayAfterOrder(orderId){
+  var o = findOrder(orderId); if(!o || o.status === 'cancelled') return;
+  var modes = payChoiceModes(); if(!modes.length) return;
+  var w = paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>✅ Order placed</h3><div class="sub">#' + esc(o.id) + '</div></div><button type="button" class="acpay-btn ghost" id="apAskX" style="flex:none;padding:6px 12px" aria-label="Close">✕</button></div>' +
+    '<div class="acpay-amt">' + money(orderPayable(o)) + '</div><div style="font-weight:700;margin-bottom:4px">💳 How would you like to pay?</div>' +
+    '<div class="acpay-row">' + '<button type="button" class="acpay-btn green" id="apAskNow">📱 Pay now<br><span style="font-weight:500;font-size:11px">' + (upiOn() || qrImageOn() ? 'UPI / QR' : 'bank transfer') + '</span></button>' +
+    (modes.indexOf('later') >= 0 ? '<button type="button" class="acpay-btn ghost" id="apAskLater">🕒 Pay later<br><span style="font-weight:500;font-size:11px">on account</span></button>' : '') + '</div>' +
+    '<div class="sub" style="margin-top:8px">You can also pay any time from My Orders.</div>');
+  var pick = function(mode){ var f = findOrder(orderId); if(f){ f.payMode = mode; saveOrder(f); } paySheetClose(); if(mode === 'now') openPaySheet(orderId); else showToast('Okay — pay whenever you are ready'); if(typeof renderOrdersView === 'function' && !adminSession && currentView === 'orders') renderOrdersView(); };
+  w.querySelector('#apAskX').onclick = paySheetClose;
+  w.querySelector('#apAskNow').onclick = function(){ pick('now'); };
+  var lb = w.querySelector('#apAskLater'); if(lb) lb.onclick = function(){ pick('later'); };
+}
+
 /* ---- dealer: order card block + pay sheet ---- */
 function payDealerBlockHtml(o){
   var s = payState(o); if(s === 'cancelled') return '';
@@ -3408,6 +3422,12 @@ function adminPayPanelHtml(o){
       '<div style="flex:0 0 auto"><button type="button" class="btn-admin sm" data-pay-save="' + esc(o.id) + '">Save</button></div></div>' +
     ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') + '</div>';
 }
+/* admin: the payment section opens as a pop-up (button sits next to Invoice in the order details) */
+function openAdminPaySheet(orderId){
+  var o = findOrder(orderId); if(!o || o.status === 'cancelled') return;
+  var w = paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>💳 Payment</h3><div class="sub">Order #' + esc(o.id) + ' · ' + esc(o.dealerBusiness || o.dealerGst) + '</div></div><button type="button" class="acpay-btn ghost" id="apPayX" style="flex:none;padding:6px 12px">✕</button></div>' + adminPayPanelHtml(o).replace('style="margin:8px 12px"', 'style="margin:10px 0 0"'));
+  w.querySelector('#apPayX').onclick = paySheetClose;
+}
 function payAdminName(){ return (window.AC_CLOUD && AC_CLOUD.staffName) || localStorage.getItem('ac_admin_user') || 'admin'; }
 /* The one place that changes an order's payment status (admin only). */
 function adminSetPayment(orderId, status, amount, note, actionLabel){
@@ -3427,7 +3447,7 @@ function adminSetPayment(orderId, status, amount, note, actionLabel){
   var label = actionLabel || ('Marked ' + (status === 'paid' ? 'Paid' : status === 'partial' ? 'Part paid' : 'Unpaid'));
   o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: label, amount: status === 'partial' ? amt : (status === 'paid' ? due : 0), note: note || '' }]);
   saveOrder(o); logAudit('Payment status', '#' + o.id + ' → ' + status + (status === 'partial' ? ' (' + money(amt) + ')' : ''));
-  showToast('Payment status saved ✔'); if(adminSession) renderAdminOrders();
+  paySheetClose(); showToast('Payment status saved ✔'); if(adminSession) renderAdminOrders();
   return true;
 }
 function payRejectClaim(orderId){
@@ -3435,7 +3455,7 @@ function payRejectClaim(orderId){
   var why = prompt('Why was it not received? (shown to the dealer, optional)', 'Not seen in our account yet'); if(why === null) return;
   o.payClaim.status = 'rejected'; o.payClaim.reason = why;
   o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: 'Marked not received', amount: o.payClaim.amount, utr: o.payClaim.utr, note: why }]);
-  saveOrder(o); logAudit('Payment not received', '#' + o.id + (o.payClaim.utr ? ' · ref ' + o.payClaim.utr : '')); showToast('Dealer will see it as not received'); if(adminSession) renderAdminOrders();
+  saveOrder(o); logAudit('Payment not received', '#' + o.id + (o.payClaim.utr ? ' · ref ' + o.payClaim.utr : '')); paySheetClose(); showToast('Dealer will see it as not received'); if(adminSession) renderAdminOrders();
 }
 /* red number on the admin "Orders" tab = orders that have been received (placed) and are waiting to be confirmed */
 var ORDERS_BADGE_LAST = null;
@@ -3449,9 +3469,10 @@ function updatePayBadge(){
   ORDERS_BADGE_LAST = n;
 }
 document.addEventListener('click', function(e){
-  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-payfilter]') : null; if(!t) return;
+  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-pay-popup],[data-payfilter]') : null; if(!t) return;
   var v;
   if((v = t.getAttribute('data-pay-open'))){ e.stopPropagation(); openPaySheet(v); }
+  else if((v = t.getAttribute('data-pay-popup'))){ e.stopPropagation(); openAdminPaySheet(v); }
   else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); adminSetPayment(v, 'paid', 0, '', 'Confirmed received'); }
   else if((v = t.getAttribute('data-pay-save'))){
     e.stopPropagation();
@@ -3736,7 +3757,7 @@ var JSPDF_P = null;
 function ensureJsPdf(){
   if(window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
   if(JSPDF_P) return JSPDF_P;
-  var ref = document.querySelector('script[src*="vendor/xlsx.mini.js"]'), src = ref ? ref.src.replace('xlsx.mini.js', 'jspdf.umd.min.js') : 'js/vendor/jspdf.umd.min.js';
+  var ref = document.querySelector('script[src*="vendor/xlsx.mini.js"]'), aref = document.querySelector('script[src*="/app.js"]'), src = ref ? ref.src.replace(/xlsx\.mini\.js.*$/, 'jspdf.umd.min.js') : aref ? aref.src.replace(/app\.js.*$/, 'vendor/jspdf.umd.min.js') : 'js/vendor/jspdf.umd.min.js';
   JSPDF_P = new Promise(function(res, rej){
     var s = document.createElement('script'); s.src = src;
     s.onload = function(){ (window.jspdf && window.jspdf.jsPDF) ? res() : rej(new Error('PDF tool did not start')); };
@@ -3877,6 +3898,17 @@ function qtBuildPdf(){
   var nameBit = QT.customer.trim() ? '-' + QT.customer.trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) : '';
   return { doc: doc, no: m.no, name: 'Quotation-' + m.no + nameBit + '.pdf' };
 }
+/* Save the PDF straight away (blob + link). Keeps a visible "open PDF" link as a backup for in-app browsers that block downloads. */
+var QT_URL = null;
+function qtSavePdf(r){
+  try{ if(QT_URL) URL.revokeObjectURL(QT_URL); }catch(e){}
+  var blob = r.doc.output('blob');
+  QT_URL = URL.createObjectURL(blob);
+  var a = document.createElement('a'); a.href = QT_URL; a.download = r.name; a.rel = 'noopener'; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ if(a.parentNode) a.remove(); }, 1000);
+  return { url: QT_URL, name: r.name };
+}
 function qtMakePdf(){
   var err = qtValidate(); if(err){ showToast(err); return Promise.reject(null); }
   return ensureJsPdf().then(function(){ try{ return qtBuildPdf(); }catch(e){ console.error('Quote PDF failed', e); throw new Error('Could not create the PDF. Please check the items and try again.'); } });
@@ -3964,15 +3996,25 @@ function openQuoteMaker(){
 
   var busy = false;
   function lock(on){ busy = on; $t('qtDl').disabled = on; $t('qtWa').disabled = on; }
+  function downloaded(r){
+    var sv = qtSavePdf(r), note = $t('qtWaNote'); showToast('PDF downloaded');
+    note.style.display = ''; note.innerHTML = '✔ <b>' + esc(sv.name) + '</b> is downloading. If nothing happened, <a href="' + sv.url + '" target="_blank" rel="noopener" style="color:#17325c;font-weight:700;text-decoration:underline">tap here to open the PDF</a> and save it from there.';
+  }
   go('qtDl', 'click', function(){
-    if(busy) return; lock(true);
-    qtMakePdf().then(function(r){ r.doc.save(r.name); showToast('PDF downloaded'); }).catch(function(er){ if(er && er.message) showToast(er.message); }).then(function(){ lock(false); });
+    if(busy) return;
+    if(window.jspdf && window.jspdf.jsPDF){                    // tool already loaded: build and save inside the tap itself
+      var err = qtValidate(); if(err){ showToast(err); return; }
+      try{ downloaded(qtBuildPdf()); }catch(e){ console.error('Quote PDF failed', e); showToast('Could not create the PDF. Please check the items and try again.'); }
+      return;
+    }
+    lock(true);
+    qtMakePdf().then(function(r){ downloaded(r); }).catch(function(er){ if(er && er.message) showToast(er.message); }).then(function(){ lock(false); });
   });
   go('qtWa', 'click', function(){
     if(busy) return; lock(true); var note = $t('qtWaNote'); note.style.display = 'none';
     function manual(r){
-      r.doc.save(r.name); var ph = qtCustomerWaPhone(), link = 'https://wa.me/' + ph + '?text=' + encodeURIComponent('Hello' + (QT.customer.trim() ? ' ' + QT.customer.trim() : '') + ', please find our quotation ' + r.no + ' (PDF).');
-      note.style.display = ''; note.innerHTML = '✔ The PDF was saved to your device. WhatsApp cannot attach it automatically here — open the chat below and attach <b>' + esc(r.name) + '</b> with the 📎 button.<div style="margin-top:8px"><a class="acpay-btn green" target="_blank" rel="noopener" href="' + esc(link) + '">Open WhatsApp chat</a></div>';
+      var sv = qtSavePdf(r); var ph = qtCustomerWaPhone(), link = 'https://wa.me/' + ph + '?text=' + encodeURIComponent('Hello' + (QT.customer.trim() ? ' ' + QT.customer.trim() : '') + ', please find our quotation ' + r.no + ' (PDF).');
+      note.style.display = ''; note.innerHTML = '✔ The PDF was saved to your device. WhatsApp cannot attach it automatically here — open the chat below and attach <b>' + esc(r.name) + '</b> with the 📎 button (if the file is not in your downloads, <a href="' + sv.url + '" target="_blank" rel="noopener" style="color:#17325c;font-weight:700;text-decoration:underline">open the PDF here</a>).<div style="margin-top:8px"><a class="acpay-btn green" target="_blank" rel="noopener" href="' + esc(link) + '">Open WhatsApp chat</a></div>';
     }
     qtMakePdf().then(function(r){
       var file = null; try{ file = new File([r.doc.output('blob')], r.name, { type: 'application/pdf' }); }catch(e){}
@@ -4757,7 +4799,7 @@ function autoStatusRowHtml(o){
       '</div>' +
     '</div>';
 }
-function orderDetailHtml(o){ return orderDetailHtml0(o) + adminPayPanelHtml(o); }
+function orderDetailHtml(o){ return orderDetailHtml0(o); }
 function orderDetailHtml0(o){
   var discAmt = orderDiscountAmount(o);
   var payable = orderPayable(o);
@@ -4783,6 +4825,7 @@ function orderDetailHtml0(o){
       '<button class="btn-admin sm outline" data-discount-toggle="'+esc(o.id)+'">🎁 Bonus discount</button>' +
       '<button class="btn-admin sm outline" data-export="'+esc(o.id)+'">⬇ Export</button>' +
       (o.status !== 'cancelled' ? '<button class="btn-admin sm outline" data-invoice="'+esc(o.id)+'">🧾 Invoice</button>' : '') +
+      (o.status !== 'cancelled' ? '<button class="btn-admin sm outline" data-pay-popup="'+esc(o.id)+'">💳 Payment</button>' : '') +
     '</div>' +
     autoStatusRowHtml(o) +
     (canEditItems ? (
