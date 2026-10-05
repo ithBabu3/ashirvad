@@ -156,11 +156,11 @@ service cloud.firestore {
       allow delete: if canWrite() || mine(resource.data);
     }
 
-    // ---- audit trail: anyone signed in can add a line, only admin can read / change it ----
+    // ---- audit trail: REMOVED from the app. Old entries can only be read / deleted by the admin; nothing can be added any more ----
     match /audit_log/{id} {
-      allow create: if staffOrDealer();
       allow read: if isAdmin();
-      allow update, delete: if isOwner();
+      allow delete: if isOwner();
+      allow create, update: if false;
     }
 
         // ---- distributors ----

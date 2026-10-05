@@ -41,7 +41,7 @@ var GROUPS = [
     M('roles', '🎭', 'Distributor roles', 'What each team role may do.', ['name']),
     M('login_index', '🧭', 'Login-ID lookup', 'Maps a login ID to its sign-in e-mail. Not listable (protected by design).', [], { noList: true, sensitive: true }),
     M('admins', '🛡', 'Staff logins', 'Owner / manager / viewer accounts for this admin console.', ['username', 'name', 'role'], { sensitive: true }),
-    M('audit_log', '📜', 'Audit log', 'Who did what and when.', ['date', 'by', 'action', 'details']),
+    M('audit_log', '📜', 'Old audit log', 'The audit trail was switched off. Old entries stay here until you delete them to free space.', ['date', 'by', 'action', 'details']),
     M('config', '⚙️', 'Settings', 'Shop settings (invoice, delivery …) and the invoice counter.', [], { fixed: ['settings', 'invoice_seq'] })]]
 ];
 var MODELS = {}; GROUPS.forEach(function(g){ g[1].forEach(function(m){ MODELS[m.id] = m; }); });
@@ -361,7 +361,7 @@ var RG = [
   { id: 'dealers', label: '🏢 Dealers', desc: 'Dealer profiles and their login links. (Their sign-in accounts remain in Firebase Authentication.)', colls: ['dealers', 'accounts'] },
   { id: 'catalogue', label: '📦 Catalogue', desc: 'Products, catalog cards, categories, offers, banners, calculator rules, broadcasts.', colls: ['products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_totals'] },
   { id: 'distributors', label: '🚚 Distributors', desc: 'Distributors, their stock, sales, orders, history, requests, logins and roles.', colls: ['distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'dist_logins', 'roles'], extra: ['login_index_dist'] },
-  { id: 'audit', label: '📜 Audit log', desc: 'The history of who did what.', colls: ['audit_log'] },
+  { id: 'audit', label: '📜 Old audit log entries', desc: 'Leftover entries from before the audit log was removed.', colls: ['audit_log'] },
   { id: 'settings', label: '⚙️ Shop settings', desc: 'Invoice / delivery settings go back to defaults (the app asks you to set them up again).', colls: [], extra: ['settings'] },
   { id: 'staff', label: '🛡 Staff logins', desc: 'All managers and viewers (the Owner — you — is never deleted).', colls: [], extra: ['staff'] }
 ];
@@ -431,7 +431,6 @@ function runReset(plan, wantBackup){
     // browser copies of the data are stale now
     try{ var ls = window.localStorage, rm = []; for(var i = 0; i < ls.length; i++){ var k = ls.key(i); if(/^ac_/.test(k) && k !== 'ac_admin_session') rm.push(k); } rm.forEach(function(k){ ls.removeItem(k); }); }catch(e){}
     pg.set('Finished', 100);
-    try{ var nowT = Date.now(); db().collection('audit_log').doc().set({ id: nowT, ts: nowT, date: new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }), by: who(), action: plan.only ? 'Data deleted' : 'Factory reset', details: title }); }catch(e){}
     pg.body('<div style="margin-top:6px">' + report.map(function(r){ return '<div class="dm-flex" style="justify-content:space-between;border-top:1px solid #f0ead8;padding:6px 0"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>'; }).join('') +
       (failed.length ? '<div class="dm-sub" style="color:#b23b3b;margin-top:8px"><b>Some parts could not be deleted:</b><br>' + failed.map(esc).join('<br>') + '<br>Publish the latest rules (firebase deploy --only firestore) and run this again.</div>' : '<div class="dm-sub" style="color:#1e7b46;margin-top:8px"><b>✔ Done.</b> ' + total + ' record(s) deleted.</div>') +
       '<div class="dm-sub" style="margin-top:8px">The page reloads so everything starts clean.' + (plan.groups && plan.groups.some(function(g){ return g.id === 'dealers' || g.id === 'distributors' || g.id === 'staff'; }) ? ' Old sign-in accounts are only <i>disabled in effect</i>; to remove them completely use Firebase console → Authentication.' : '') + '</div><div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn" id="rsReload">Reload now</button></div></div>');

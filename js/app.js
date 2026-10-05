@@ -898,7 +898,7 @@ function saveCart(c){ localStorage.setItem(cartKey(), JSON.stringify(c)); }
 function getAllOrders(){
   try { return JSON.parse(localStorage.getItem('ac_orders') || '[]'); } catch(e){ return []; }
 }
-function saveAllOrders(list){ localStorage.setItem('ac_orders', JSON.stringify(list)); }
+function saveAllOrders(list){ PAY_CACHE = null; localStorage.setItem('ac_orders', JSON.stringify(list)); }
 function getOrders(){
   if(!session) return [];
   return getAllOrders().filter(function(o){ return o.dealerGst === session; });
@@ -1038,7 +1038,7 @@ var SETTINGS_DEFAULTS = {
   deliveryCharge:150,
   logoUrl:'',
   monthTarget:0, monthReward:'',
-  upiId:'', upiName:'', payNowOn:true, payLaterOn:true, payNote:''
+  upiId:'', upiName:'', payNowOn:true, payLaterOn:true, payNote:'', qrMode:'auto', qrImage:''
 };
 function loadSettings(){
   try{
@@ -1055,7 +1055,7 @@ function loadPayments(){
   try { var s = JSON.parse(localStorage.getItem('ac_payments') || 'null'); if(Array.isArray(s)) return s; } catch(e){}
   return [];
 }
-function savePayments(list){ localStorage.setItem('ac_payments', JSON.stringify(list)); PAYMENTS = list; }
+function savePayments(list){ PAY_CACHE = null; localStorage.setItem('ac_payments', JSON.stringify(list)); PAYMENTS = list; }
 var PAYMENTS = loadPayments();
 function nextPaymentId(){ return PAYMENTS.reduce(function(m,p){ return Math.max(m,p.id); },0) + 1; }
 function paymentsForDealer(gst){ return PAYMENTS.filter(function(p){ return p.dealerGst === gst; }); }
@@ -1174,18 +1174,11 @@ function checkBroadcastNotifications(){
 }
 
 /* ---- Audit log ---- */
-function loadAuditLog(){
-  try { var l = JSON.parse(localStorage.getItem('ac_audit_log') || '[]'); return Array.isArray(l) ? l : []; } catch(e){ return []; }
-}
-function saveAuditLog(list){ localStorage.setItem('ac_audit_log', JSON.stringify(list)); AUDIT_LOG = list; }
-var AUDIT_LOG = loadAuditLog();
-function logAudit(action, details){
-  var by = localStorage.getItem('ac_admin_user') || 'admin';
-  AUDIT_LOG.push({ id:(AUDIT_LOG.reduce(function(m,a){return Math.max(m,a.id);},0)+1), ts:Date.now(),
-    date:new Date().toLocaleString('en-IN',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}),
-    by:by, action:action, details:details });
-  saveAuditLog(AUDIT_LOG);
-}
+/* The audit trail was removed: it grew without limit and cost Firestore reads / writes on the free plan.
+   These stubs keep every existing logAudit(...) call harmless. */
+var AUDIT_LOG = [];
+function saveAuditLog(){}
+function logAudit(){}
 
 /* ---- Formal GST tax invoice ---- */
 function nextInvoiceNo(){
@@ -3123,10 +3116,29 @@ function placeOrder(){
    Paid / part-paid / unpaid is ALWAYS derived from the ledger payments that carry this orderId. */
 var CART_PAY_MODE = 'now';
 function r2(n){ return Math.round((Number(n)||0) * 100) / 100; }
+function qrImageOn(){ return SETTINGS.qrMode === 'image' && !!SETTINGS.qrImage; }
 function upiOn(){ return !!(SETTINGS.upiId && SETTINGS.payNowOn !== false); }
-function nowOn(){ return SETTINGS.payNowOn !== false && !!(SETTINGS.upiId || SETTINGS.payNote); }   // UPI QR, or just bank details if no UPI ID
+function nowOn(){ return SETTINGS.payNowOn !== false && !!(SETTINGS.upiId || SETTINGS.payNote || qrImageOn()); }   // UPI QR, or just bank details if no UPI ID
 function laterOn(){ return SETTINGS.payLaterOn !== false; }
-function orderPaid(o){ return r2(PAYMENTS.filter(function(p){ return p.orderId === o.id; }).reduce(function(s, p){ return s + Number(p.amount || 0); }, 0)); }
+var PAY_CACHE = null;
+/* What each order has received. Payments that name an order go to it; payments with no order (general credit on the dealer's account)
+   and any surplus are applied to that dealer's OLDEST unpaid orders first — exactly how the ledger balance already works. */
+function payAlloc(){
+  if(PAY_CACHE) return PAY_CACHE;
+  var orders = getAllOrders().filter(function(o){ return o.status !== 'cancelled'; }), byId = {}, got = {}, pool = {};
+  orders.forEach(function(o){ byId[o.id] = o; });
+  PAYMENTS.forEach(function(p){ var amt = Number(p.amount) || 0; if(p.orderId && byId[p.orderId]) got[p.orderId] = (got[p.orderId] || 0) + amt; else pool[p.dealerGst] = (pool[p.dealerGst] || 0) + amt; });
+  orders.forEach(function(o){ var due = orderPayable(o), g = got[o.id] || 0; if(g > due){ pool[o.dealerGst] = (pool[o.dealerGst] || 0) + (g - due); got[o.id] = due; } });
+  var tagged = {}; Object.keys(got).forEach(function(k){ tagged[k] = got[k]; });
+  orders.slice().sort(function(x, y){ return (Number(x.createdAt) || 0) - (Number(y.createdAt) || 0); }).forEach(function(o){
+    var need = orderPayable(o) - (got[o.id] || 0), av = pool[o.dealerGst] || 0;
+    if(need > 0.001 && av > 0){ var take = Math.min(need, av); got[o.id] = (got[o.id] || 0) + take; pool[o.dealerGst] = av - take; }
+  });
+  var out = { paid: {}, tagged: {} }; Object.keys(got).forEach(function(k){ out.paid[k] = r2(got[k]); out.tagged[k] = r2(tagged[k] || 0); });
+  return (PAY_CACHE = out);
+}
+function orderPaid(o){ return payAlloc().paid[o.id] || 0; }
+function orderPaidTagged(o){ return Math.min(orderPaid(o), payAlloc().tagged[o.id] || 0); }
 function orderBalance(o){ return Math.max(0, r2(orderPayable(o) - orderPaid(o))); }
 function payState(o){
   if(!o || o.status === 'cancelled') return 'cancelled';
@@ -3179,13 +3191,13 @@ function paySheetClose(){ var w = document.getElementById('acPaySheet'); if(w) w
 /* ---- checkout: Pay now / Pay later ---- */
 function payChoiceModes(){ var m = []; if(!nowOn()) return m; m.push('now'); if(laterOn()) m.push('later'); return m; }   // nothing to pay with yet -> the old behaviour, no choice shown
 var PAY_NOTES = { now: 'A QR code and an “Open UPI app” button appear right after you place the order.', nowBank: 'Our bank details appear right after you place the order — pay, then enter the reference number.', later: 'The amount is added to your account balance. Pay any time from My Orders.' };
-function payNoteFor(k){ return k === 'now' && !upiOn() ? PAY_NOTES.nowBank : PAY_NOTES[k]; }
+function payNoteFor(k){ return k === 'now' && !(upiOn() || qrImageOn()) ? PAY_NOTES.nowBank : PAY_NOTES[k]; }
 function payChoiceHtml(){
   var modes = payChoiceModes(); if(!modes.length) return '';
   if(modes.indexOf(CART_PAY_MODE) < 0) CART_PAY_MODE = modes[0];
   var btn = function(k, label){ return '<label class="pc-opt' + (CART_PAY_MODE === k ? ' on' : '') + '" data-pcnote="' + esc(payNoteFor(k)) + '"><input type="radio" name="acPayMode" value="' + k + '"' + (CART_PAY_MODE === k ? ' checked' : '') + '>' + label + '</label>'; };
   return '<div class="pay-choice"><div class="pc-t">💳 How would you like to pay?</div><div class="pc-seg">' +
-    (modes.indexOf('now') >= 0 ? btn('now', '📱 Pay now<small>' + (upiOn() ? 'UPI' : 'bank transfer') + '</small>') : '') + (modes.indexOf('later') >= 0 ? btn('later', '🕒 Pay later<small>on account</small>') : '') +
+    (modes.indexOf('now') >= 0 ? btn('now', '📱 Pay now<small>' + (upiOn() || qrImageOn() ? 'UPI' : 'bank transfer') + '</small>') : '') + (modes.indexOf('later') >= 0 ? btn('later', '🕒 Pay later<small>on account</small>') : '') +
     '</div><div class="pc-note">' + esc(payNoteFor(CART_PAY_MODE)) + '</div></div>';
 }
 function payChoiceMode(){ var m = payChoiceModes(); if(!m.length) return null; return m.indexOf(CART_PAY_MODE) >= 0 ? CART_PAY_MODE : m[0]; }
@@ -3197,9 +3209,10 @@ function payDealerBlockHtml(o){
   var msg = s === 'verify' ? 'You told us you paid ' + money(cl.amount) + (cl.utr ? ' (ref ' + esc(cl.utr) + ')' : '') + '. We will confirm once we see it in our account.' :
             s === 'rejected' ? '⚠ We could not find that payment' + (cl.reason ? ' — ' + esc(cl.reason) : '') + '. Please check the reference and send it again.' :
             s === 'paid' ? 'Thank you — payment received.' : s === 'later' ? 'You chose to pay later. Pay whenever you are ready.' : '';
-  var canPay = bal > 0 && (upiOn() || SETTINGS.payNote);
+  var canPay = bal > 0 && nowOn();
   return '<div class="pay-block"><div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div>' +
     (paid > 0 ? '<div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div>' : '') +
+    (paid - orderPaidTagged(o) > 0.5 ? '<div class="pb-msg" style="margin-top:0">Includes ' + money(paid - orderPaidTagged(o)) + ' adjusted from earlier payments on your account.</div>' : '') +
     (bal > 0 ? '<div class="pb-row"><span>Balance</span><b style="color:#b23b3b">' + money(bal) + '</b></div>' : '') +
     (msg ? '<div class="pb-msg">' + msg + '</div>' : '') +
     (canPay ? '<button type="button" class="btn-royal" style="margin-top:8px;padding:9px 14px;font-size:13.5px" data-pay-open="' + esc(o.id) + '">' + (s === 'verify' ? '✏ Update payment details' : '💳 Pay ' + money(bal) + ' now') + '</button>' : '') + '</div>';
@@ -3208,30 +3221,33 @@ function openPaySheet(orderId){
   var o = findOrder(orderId); if(!o) return;
   var bal = orderBalance(o); if(bal <= 0){ showToast('This order is already paid ✔'); return; }
   var cl = o.payClaim && o.payClaim.status !== 'confirmed' ? o.payClaim : {};
-  var link = upiOn() ? upiLink(bal, o.id) : '';
+  var hasUpi = !!SETTINGS.upiId, img = qrImageOn(), link = hasUpi ? upiLink(bal, o.id) : '';
+  var qrHtml = img ? '<div class="acpay-qr"><img src="' + esc(SETTINGS.qrImage) + '" alt="Payment QR" style="max-width:250px;width:100%;max-height:250px;object-fit:contain;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></div><div class="sub" style="text-align:center">Scan with any UPI app and pay <b>' + money(bal) + '</b> (type this amount).</div>'
+    : hasUpi ? '<div class="acpay-qr" id="apyQr"></div><div class="sub" style="text-align:center">Scan with any UPI app (GPay, PhonePe, Paytm…) — the amount is filled in for you.</div>' : '';
   paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>Pay for order #' + esc(o.id) + '</h3><div class="sub">' + esc(SETTINGS.upiName || SETTINGS.shopName || '') + '</div></div><button type="button" class="acpay-btn ghost" id="apyX" style="flex:none;padding:6px 12px">✕</button></div>' +
-    '<div class="acpay-amt">' + money(bal) + '</div>' +
-    (upiOn() ?
-      '<div class="acpay-qr" id="apyQr"></div><div class="sub" style="text-align:center">Scan with any UPI app (GPay, PhonePe, Paytm…) — the amount is filled in for you.</div>' +
-      '<div class="acpay-row"><a class="acpay-btn gold" href="' + esc(link) + '" id="apyOpen">📱 Open UPI app</a><button type="button" class="acpay-btn ghost" id="apyCopy">Copy UPI ID</button></div>' +
-      '<div class="sub" style="text-align:center;margin-top:6px">UPI ID: <b>' + esc(SETTINGS.upiId) + '</b></div>' : '') +
+    '<div class="acpay-amt">' + money(bal) + '</div>' + qrHtml +
+    (hasUpi ? '<div class="acpay-row"><a class="acpay-btn gold" href="' + esc(link) + '" id="apyOpen">📱 Open UPI app</a><button type="button" class="acpay-btn ghost" id="apyCopy">Copy UPI ID</button></div><div class="sub" style="text-align:center;margin-top:6px">UPI ID: <b>' + esc(SETTINGS.upiId) + '</b></div>' : '') +
     (SETTINGS.payNote ? '<div class="pay-block" style="white-space:pre-line">' + esc(SETTINGS.payNote) + '</div>' : '') +
     '<div style="border-top:1px solid #eee;margin-top:14px;padding-top:6px"><b>After you have paid</b><div class="sub">Enter the reference number (UTR / transaction ID) shown in your UPI app, so we can match it.</div></div>' +
     '<label class="l">Amount you paid (₹)</label><input id="apyAmt" type="number" inputmode="decimal" min="1" step="any" value="' + (cl.amount || bal) + '">' +
     '<label class="l">UTR / reference no. *</label><input id="apyUtr" autocapitalize="characters" autocomplete="off" placeholder="e.g. 412345678901" value="' + esc(cl.utr || '') + '">' +
-    '<label class="l">Paid via</label><select id="apyVia"><option value="UPI">UPI</option><option value="Bank transfer">Bank transfer (NEFT / IMPS)</option><option value="Cash">Cash handed over</option></select>' +
+    '<label class="l">Paid via</label><select id="apyVia">' + ['UPI', 'Bank transfer', 'Cash'].map(function(m){ return '<option value="' + m + '"' + (cl.via === m ? ' selected' : '') + '>' + (m === 'Bank transfer' ? 'Bank transfer (NEFT / IMPS)' : m === 'Cash' ? 'Cash handed over' : m) + '</option>'; }).join('') + '</select>' +
     '<label class="l">Note (optional)</label><input id="apyNote" value="' + esc(cl.note || '') + '">' +
     '<div class="acpay-err" id="apyErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="apyLater">Pay later</button><button type="button" class="acpay-btn green" id="apySend">✔ I have paid</button></div>');
   var $ = function(id){ return document.getElementById(id); };
-  if(upiOn()){ try{ renderQRInto('apyQr', link, 190); }catch(e){} $('apyCopy').onclick = function(){ try{ navigator.clipboard.writeText(SETTINGS.upiId); showToast('UPI ID copied'); }catch(e){ prompt('Copy this UPI ID', SETTINGS.upiId); } }; }
+  if(hasUpi && !img){ try{ renderQRInto('apyQr', link, 190); }catch(e){} }
+  if(hasUpi) $('apyCopy').onclick = function(){ try{ navigator.clipboard.writeText(SETTINGS.upiId); showToast('UPI ID copied'); }catch(e){ prompt('Copy this UPI ID', SETTINGS.upiId); } };
   $('apyX').onclick = paySheetClose; $('apyLater').onclick = paySheetClose;
   $('apySend').onclick = function(){
-    var amt = r2($('apyAmt').value), utr = $('apyUtr').value.trim().replace(/\s+/g, ''), err = $('apyErr'); err.textContent = '';
+    var btn = $('apySend'), amt = r2($('apyAmt').value), utr = $('apyUtr').value.trim().replace(/\s+/g, ''), err = $('apyErr'); err.textContent = '';
+    if(btn.disabled) return;
     if(!(amt > 0)){ err.textContent = 'Enter the amount you paid.'; return; }
     if(amt > bal + 1){ err.textContent = 'That is more than the balance (' + money(bal) + ').'; return; }
     if($('apyVia').value !== 'Cash' && !/^[A-Za-z0-9\-]{6,30}$/.test(utr)){ err.textContent = 'Enter the UTR / reference number (6–30 letters or numbers).'; return; }
     if(utr && utrUsedElsewhere(utr, o.id) && !confirm('This reference number was already used on another order. Send anyway?')) return;
     var fresh = findOrder(o.id); if(!fresh) return;
+    if(orderBalance(fresh) <= 0){ paySheetClose(); showToast('This order is already paid ✔'); return; }
+    btn.disabled = true;
     fresh.payMode = fresh.payMode || 'now';
     fresh.payClaim = { status: 'pending', via: $('apyVia').value, utr: utr, amount: amt, note: $('apyNote').value.trim(), at: Date.now() };
     saveOrder(fresh); paySheetClose(); showToast('Thanks! We will confirm your payment shortly.');
@@ -3252,7 +3268,8 @@ function adminPayPanelHtml(o){
   return '<div class="pay-block" style="margin:8px 12px"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
     '<div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div><div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div><div class="pb-row"><span>Balance</span><b style="color:' + (bal > 0 ? '#b23b3b' : '#1e7b46') + '">' + money(bal) + '</b></div>' +
     '<div class="pb-msg">Dealer chose: <b>' + (o.payMode === 'later' ? 'Pay later' : o.payMode === 'now' ? 'Pay now' : '—') + '</b></div>' + claim +
-    (pays.length ? '<div class="acpay-hist"><b>Received payments</b><br>' + pays.map(function(p){ return '• ' + money(p.amount) + ' · ' + esc(p.date || '') + (p.method ? ' · ' + esc(p.method) : '') + (p.utr ? ' · ref ' + esc(p.utr) : '') + (p.by ? ' · by ' + esc(p.by) : ''); }).join('<br>') + '</div>' : '') +
+    (paid - orderPaidTagged(o) > 0.5 ? '<div class="acpay-hist">ℹ ' + money(paid - orderPaidTagged(o)) + ' of the received amount was applied automatically from general payments on this dealer\'s account (oldest orders first).</div>' : '') +
+    (pays.length ? '<div class="acpay-hist"><b>Payments recorded against this order</b><br>' + pays.map(function(p){ return '• ' + money(p.amount) + ' · ' + esc(p.date || '') + (p.method ? ' · ' + esc(p.method) : '') + (p.utr ? ' · ref ' + esc(p.utr) : '') + (p.by ? ' · by ' + esc(p.by) : ''); }).join('<br>') + '</div>' : '') +
     ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') +
     (bal > 0 ? '<div style="margin-top:8px"><button type="button" class="btn-admin sm outline" data-pay-record="' + esc(o.id) + '">＋ Record a payment (cash / bank / UPI)</button></div>' : '') + '</div>';
 }
@@ -3272,6 +3289,7 @@ function openPayRecordSheet(orderId, fromClaim){
     if(!(amt > 0)){ err.textContent = 'Enter the amount.'; return; }
     if(amt > bal + 0.5 && !confirm('This is more than the balance (' + money(bal) + '). Record anyway?')) return;
     if(utr && utrUsedElsewhere(utr, o.id) && !confirm('This reference number is already on another order/payment. Record anyway?')) return;
+    var okBtn = $('apyOk'); if(okBtn.disabled) return; okBtn.disabled = true;
     var by = payAdminName(), fresh = findOrder(o.id);
     recordPayment(fresh.dealerGst, amt, fresh.id, 'Order #' + fresh.id + (utr ? ' · ref ' + utr : ''), { utr: utr, method: $('apyVia').value, by: by, orderRef: fresh.id });
     if(fresh.payClaim && fresh.payClaim.status === 'pending') fresh.payClaim.status = 'confirmed';
@@ -4904,13 +4922,47 @@ function openInvoiceSettings(){
       '<div class="full" style="font-size:12px; color:#52607a;">Dealers see the <b>Pay now / Pay later</b> choice at checkout only after a UPI ID is saved here. The same goes for the “Pay now” button on their orders.</div>' +
       '<div class="full"><label>Your UPI ID (VPA)</label><input type="text" id="isUpi" value="'+esc(SETTINGS.upiId||'')+'" placeholder="yourshop@okhdfcbank" autocapitalize="none"></div>' +
       '<div class="full"><label>Name shown in the UPI app</label><input type="text" id="isUpiName" value="'+esc(SETTINGS.upiName||'')+'" placeholder="Shop name"></div>' +
+      '<div class="full"><label>QR code shown to dealers</label><select id="isQrMode"><option value="auto">Automatic — made from my UPI ID with the exact order amount (recommended)</option><option value="image">My own QR image (bank / PhonePe Business / Paytm QR)</option></select></div>' +
+      '<div class="full" id="isQrAutoBox"><label>Preview — what a dealer scans (sample ₹1)</label><div id="isQrAutoPrev" style="margin-top:4px;"></div></div>' +
+      '<div class="full" id="isQrImgBox" style="display:none;"><label>Your QR image</label><div style="display:flex; gap:8px; flex-wrap:wrap;"><button type="button" class="btn-admin sm outline" id="isQrUp">⬆ Upload QR image</button><button type="button" class="btn-admin sm outline" id="isQrClr">Remove</button></div><input type="file" id="isQrFile" accept="image/*" style="display:none;"><label style="margin-top:8px;">…or paste an image link</label><input type="text" id="isQrUrl" placeholder="https://…/my-qr.png"><div id="isQrImgPrev" style="margin-top:8px;"></div><div class="ac-sub">With your own QR image the dealer types the amount shown on screen. You can change or remove it any time — new payments use it immediately.</div></div>' +
       '<div class="full"><label style="display:flex; gap:8px; align-items:center; font-size:12.5px;"><input type="checkbox" id="isPayNow" style="width:20px; height:20px; flex:none; padding:0;"'+(SETTINGS.payNowOn!==false?' checked':'')+'> <span>Offer “Pay now with UPI” at checkout</span></label></div>' +
       '<div class="full"><label style="display:flex; gap:8px; align-items:center; font-size:12.5px;"><input type="checkbox" id="isPayLater" style="width:20px; height:20px; flex:none; padding:0;"'+(SETTINGS.payLaterOn!==false?' checked':'')+'> <span>Offer “Pay later” (adds to the dealer\'s account balance)</span></label></div>' +
       '<div class="full"><label>Extra payment instructions (bank account details, cheque info… shown to dealers)</label><textarea id="isPayNote" rows="3">'+esc(SETTINGS.payNote||'')+'</textarea></div>' +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveInvoiceSettingsBtn" style="width:100%;">Save invoice settings</button>';
+  var qrState = { image: SETTINGS.qrImage || '' }, gv = function(id){ return document.getElementById(id); }, modeSel = gv('isQrMode');
+  modeSel.value = SETTINGS.qrMode === 'image' ? 'image' : 'auto';
+  if(qrState.image && !/^data:/.test(qrState.image)) gv('isQrUrl').value = qrState.image;
+  function qrPaint(){
+    var img = modeSel.value === 'image';
+    gv('isQrImgBox').style.display = img ? 'block' : 'none'; gv('isQrAutoBox').style.display = img ? 'none' : 'block';
+    gv('isQrImgPrev').innerHTML = qrState.image ? '<img src="'+esc(qrState.image)+'" alt="QR" style="max-width:200px; max-height:200px; border:1px solid #ddd; border-radius:8px; background:#fff;">' : '<span class="ac-sub">No image yet.</span>';
+    var vpa = gv('isUpi').value.trim(), box = gv('isQrAutoPrev'); box.innerHTML = '';
+    if(vpa && /^[A-Za-z0-9._\-]{2,}@[A-Za-z][A-Za-z0-9.\-]{1,}$/.test(vpa)){ try{ renderQRInto('isQrAutoPrev', 'upi://pay?pa=' + encodeURIComponent(vpa) + '&pn=' + encodeURIComponent(gv('isUpiName').value.trim() || gv('isName').value.trim() || 'Shop') + '&am=1.00&cu=INR&tn=' + encodeURIComponent('Test'), 140); }catch(e){} }
+    else box.innerHTML = '<span class="ac-sub">Enter your UPI ID above to see the QR.</span>';
+  }
+  modeSel.addEventListener('change', qrPaint); gv('isUpi').addEventListener('input', qrPaint); gv('isUpiName').addEventListener('input', qrPaint);
+  gv('isQrUrl').addEventListener('input', function(){ qrState.image = this.value.trim(); qrPaint(); });
+  gv('isQrClr').addEventListener('click', function(){ qrState.image = ''; gv('isQrUrl').value = ''; qrPaint(); });
+  gv('isQrUp').addEventListener('click', function(){ gv('isQrFile').click(); });
+  gv('isQrFile').addEventListener('change', function(){
+    var f = this.files && this.files[0]; if(!f) return; var fr = new FileReader();
+    fr.onload = function(){ var im = new Image(); im.onload = function(){
+      var sc = Math.min(1, 420 / Math.max(im.width, im.height)), cv = document.createElement('canvas'); cv.width = Math.round(im.width * sc); cv.height = Math.round(im.height * sc);
+      var cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(im, 0, 0, cv.width, cv.height);
+      var d = cv.toDataURL('image/png'); if(d.length > 120000) d = cv.toDataURL('image/jpeg', 0.92);
+      if(d.length > 120000){ showToast('That image is too big — crop it to just the QR and try again'); return; }
+      qrState.image = d; gv('isQrUrl').value = ''; qrPaint(); showToast('QR image ready — press Save');
+    }; im.onerror = function(){ showToast('Could not read that image'); }; im.src = fr.result; };
+    fr.readAsDataURL(f); this.value = '';
+  });
+  qrPaint();
   document.getElementById('saveInvoiceSettingsBtn').addEventListener('click', function(){
+    var upiV = gv('isUpi').value.trim();
+    if(upiV && !/^[A-Za-z0-9._\-]{2,}@[A-Za-z][A-Za-z0-9.\-]{1,}$/.test(upiV)){ showToast('The UPI ID looks wrong — it should look like shopname@okhdfcbank'); return; }
+    if(modeSel.value === 'image' && !qrState.image){ showToast('Upload your QR image, or choose “Automatic”'); return; }
     saveSettings(Object.assign({}, SETTINGS, {
+      qrMode: modeSel.value, qrImage: qrState.image,
       shopName: document.getElementById('isName').value.trim() || SETTINGS_DEFAULTS.shopName,
       logoUrl: document.getElementById('isLogo').value.trim(),
       shopGstin: document.getElementById('isGstin').value.trim(),
@@ -7269,6 +7321,12 @@ function renderAdminConfiguration(){
       btn: 'Open Delivery Settings',
       action: function(){ openDeliverySettings(); }
     },
+    {
+      icon: '💳', title: 'Payment QR / UPI',
+      sub: 'Set the UPI ID and QR code dealers pay to (or upload your own bank QR), bank details, and the Pay now / Pay later options.',
+      btn: 'Open payment settings',
+      action: function(){ openInvoiceSettings(); }
+    },
     (CLOUD && CLOUD.enabled && (!CLOUD.staffRole || CLOUD.staffRole === 'owner')) ? {
       icon: '🗄', title: 'Data Manager (database browser)',
       sub: 'Look at everything stored in the database in plain words — orders, dealers, products, distributors … — fix a value, add or delete records, back up and restore. Owner only.',
@@ -7836,15 +7894,6 @@ function renderAdminReports(){
     '<div class="oi-line"><span>Change in revenue</span><span'+(pctChange<0?' style="color:var(--maroon-600); font-weight:700;"':' style="color:#1b7a3d; font-weight:700;"')+'>'+(pctChange>=0?'+':'')+pctChange+'%</span></div>' +
   '</div>';
 
-  // audit log
-  var auditRows = AUDIT_LOG.slice().reverse().slice(0,25);
-  var auditHtml = '<div class="admin-card mt-3"><div class="ac-title" style="margin-bottom:8px;">Audit Log <span style="font-weight:400; font-size:11px; color:var(--ink-600);">(price / discount / override changes)</span></div>' +
-    (auditRows.length === 0 ? '<div class="ac-sub">No changes logged yet.</div>' :
-      '<div class="scroll-list-md">'+auditRows.map(function(a){
-        return '<div class="oi-line" style="display:block;"><div style="font-size:10px; color:var(--ink-600);">'+esc(a.date)+' · '+esc(a.by)+'</div><div>'+esc(a.action)+' — '+esc(a.details)+'</div></div>';
-      }).join('')+'</div>'
-    ) + '</div>';
-
   // low-stock / out-of-stock alert list
   var lowStockProducts = PRODUCTS.filter(function(p){ return p.active !== false && Number(p.stock) <= LOW_STOCK_THRESHOLD; })
     .sort(function(a,b){ return (Number(a.stock)||0) - (Number(b.stock)||0); });
@@ -7856,7 +7905,7 @@ function renderAdminReports(){
       }).join('')+'</div>'
     ) + '</div>';
 
-  adminMain.innerHTML = toolbar + statHtml + chartsRowHtml + comparisonHtml + categoryHtml + statusBreakdownHtml + lowStockHtml + bestSellersHtml + dealerHtml + auditHtml;
+  adminMain.innerHTML = toolbar + statHtml + chartsRowHtml + comparisonHtml + categoryHtml + statusBreakdownHtml + lowStockHtml + bestSellersHtml + dealerHtml;
 
   document.getElementById('repApply').addEventListener('click', function(){
     REPORTS_FILTER = {
@@ -8073,7 +8122,6 @@ function exportFullBackup(){
     banners: BANNERS,
     offers: OFFERS,
     broadcasts: BROADCASTS,
-    auditLog: AUDIT_LOG,
     settings: SETTINGS
   };
   var blob = new Blob([JSON.stringify(backup, null, 2)], { type:'application/json' });
@@ -8213,7 +8261,7 @@ window.__acRefresh = function(){
   PRODUCTS = loadProducts(); CATALOG_CATEGORIES = loadCatalogCategories(); CATALOG_SUBCATEGORIES = loadCatalogSubcategories();
   SPEC_GROUPS = loadSpecGroups(); syncSpecVariantProducts();
   CALC_RULES = loadCalcRules(); BANNERS = loadBanners(); OFFERS = loadOffers(); SETTINGS = loadSettings();
-  PAYMENTS = loadPayments(); BROADCASTS = loadBroadcasts(); AUDIT_LOG = loadAuditLog(); STOCK_NOTIFY = loadStockNotify();
+  PAY_CACHE = null; PAYMENTS = loadPayments(); BROADCASTS = loadBroadcasts(); STOCK_NOTIFY = loadStockNotify();
   if(adminSession){ renderAdmin(); }
   else if(session && !document.getElementById('appShell').classList.contains('d-none')){ render(); }
 };

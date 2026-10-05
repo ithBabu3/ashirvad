@@ -117,7 +117,6 @@ var KEYS = {
   ac_orders:               { kind:'list', coll:'orders',               scope:'owned',  gst:'dealerGst', dealerWrite:true },
   ac_payments:             { kind:'list', coll:'payments',             scope:'owned',  gst:'dealerGst' },
   ac_stock_notify:         { kind:'list', coll:'stock_notify',         scope:'owned',  gst:'gst', time:true, dealerWrite:true },
-  ac_audit_log:            { kind:'list', coll:'audit_log',            scope:'admin',  time:true, dealerWrite:true },
   ac_products:             { kind:'list', coll:'products',             scope:'shared', filter:function(p){ return !p.isCatalogVariant; } },
   ac_spec_groups:          { kind:'list', coll:'spec_groups',          scope:'shared' },
   ac_stock_totals:         { kind:'list', coll:'stock_totals',         scope:'shared', readonly:true, optional:true },
@@ -489,7 +488,7 @@ CLOUD.importDump = function(dump, onProgress){
   // 2) data — dealers first so orders / payments can be tagged with the owner's phone
   var order = ['ac_users', 'ac_accounts', 'ac_products', 'ac_spec_groups', 'ac_catalog_categories', 'ac_catalog_subcategories',
                'ac_offers', 'ac_banners', 'ac_calc_rules', 'ac_broadcasts', 'ac_settings', 'ac_orders', 'ac_payments',
-               'ac_stock_notify', 'ac_audit_log', 'ac_invoice_seq'];
+               'ac_stock_notify', 'ac_invoice_seq'];
   return chain.then(function(){
     order.forEach(function(k){
       if(dump[k] === undefined || dump[k] === null) return;

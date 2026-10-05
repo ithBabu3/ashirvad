@@ -115,3 +115,13 @@ built-in admin password in `js/app.js` applies — testing only.
 - **Cart nudges**: free-delivery progress bar, "add N more for extra X% off" using each product's bulk slabs, credit-limit meter, optional monthly target.
 - **Monthly target** (Admin → Home / delivery settings): target ₹ and reward text, shown in the cart and the dealer's account.
 - **Quote maker**: dealer margin % + rounding, customer name/phone, notes; print / save as PDF, WhatsApp, copy text. His buying price and profit are visible only to him. Quote numbers and margin are remembered on the device only.
+
+## v2.4.0 — payment QR control, payment fixes, audit log removed
+- **Payment QR is yours to control** (Admin → Configuration → *Payment QR / UPI*, or Orders → *Invoice & Payment Settings*): set / change the UPI ID and name any time, choose
+  *Automatic* (QR generated from your UPI ID with the exact order amount) or *My own QR image* (upload your bank / PhonePe Business QR, or paste a link). A live preview shows what dealers scan.
+  UPI IDs are validated before saving. Changes apply to the next payment immediately.
+- **Payment fixes**: payments with no order (general credit on the account) and any overpayment are now applied to the dealer's oldest unpaid orders, so
+  Paid / Part paid always agrees with the ledger balance; double-tap protection on "I have paid" and "Save payment"; checkout payment buttons redesigned; the Pay now / Pay later choice
+  also appears when only a QR image or bank details are set.
+- **Audit log removed**: nothing is written to it any more (saves Firestore writes and the admin's startup reads). Old entries can be deleted in Data Manager → "Old audit log".
+- Deploy: `firebase deploy --only firestore,hosting`.
