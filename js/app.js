@@ -2363,13 +2363,26 @@ function renderOfferZoneHtml(){
     }).join('') +
   '</div>';
 }
+(function(){ if(document.getElementById('acRvCss')) return; var st = document.createElement('style'); st.id = 'acRvCss';
+  st.textContent = [
+  '.product-grid.rv-strip{display:flex!important;grid-template-columns:none!important;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:thin}',
+  '.rv-strip .product-card{flex:0 0 118px;width:118px;height:auto}',
+  '.rv-strip .product-media{height:64px!important}.rv-strip .product-media svg{width:30px;height:30px}',
+  '.rv-strip .product-body{padding:6px 7px 7px;gap:3px}',
+  '.rv-strip .product-name{font-size:11.5px;min-height:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+  '.rv-strip .product-size,.rv-strip .gst-note,.rv-strip .stock-note,.rv-strip .price-mrp,.rv-strip .off-ribbon{display:none!important}',
+  '.rv-strip .price-final{font-size:13px}',
+  '.rv-strip .btn-add,.rv-strip .btn-notify{margin-top:3px;padding:4px 6px;font-size:11px}',
+  '.rv-strip .qty-stepper{margin-top:3px}.rv-strip .qty-stepper button{height:22px;width:24px;font-size:13px}',
+  '.rv-strip .wish-btn{width:20px;height:20px;font-size:12px;top:4px;left:4px}'
+  ].join('\n'); document.head.appendChild(st); })();
 function renderRecentlyViewedHtml(){
   var ids = getRecentlyViewed();
   if(!ids.length) return '';
-  var products = ids.map(function(id){ return PRODUCTS.find(function(p){ return p.id === id && p.active !== false; }); }).filter(Boolean).slice(0,8);
+  var products = ids.map(function(id){ return PRODUCTS.find(function(p){ return p.id === id && p.active !== false; }); }).filter(Boolean).slice(0,6);
   if(!products.length) return '';
   return '<div class="section-title"><span>'+t('home.recentlyViewed')+'</span></div>' +
-    '<div class="product-grid" data-ids="'+products.map(function(p){return p.id;}).join(',')+'" style="grid-template-columns:repeat('+Math.min(products.length,2)+',1fr); margin-bottom:10px;">' +
+    '<div class="product-grid rv-strip" data-ids="'+products.map(function(p){return p.id;}).join(',')+'" style="margin-bottom:10px;">' +
       products.map(productCardHtml).join('') +
     '</div>';
 }
@@ -3416,7 +3429,9 @@ function adminPayPanelHtml(o){
   return '<div class="pay-block" style="margin:8px 12px" data-pay-oid="' + esc(o.id) + '"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
     '<div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div><div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div><div class="pb-row"><span>Balance</span><b style="color:' + (bal > 0 ? '#b23b3b' : '#1e7b46') + '">' + money(bal) + '</b></div>' +
     '<div class="pb-msg">Dealer chose: <b>' + (o.payMode === 'later' ? 'Pay later' : o.payMode === 'now' ? 'Pay now' : '—') + '</b></div>' + claim +
-    '<div class="acpay-row" style="align-items:flex-end;margin-top:10px"><div style="flex:1 1 140px"><label class="l" style="margin-top:0">Payment status</label>' +
+    '<div class="acpay-row" style="margin-top:12px"><button type="button" class="acpay-btn green" data-pay-quick="paid" data-pay-for="' + esc(o.id) + '">✔ Mark Paid</button><button type="button" class="acpay-btn red" data-pay-quick="unpaid" data-pay-for="' + esc(o.id) + '">✕ Mark Not paid</button></div>' +
+    '<div class="sub" style="margin-top:10px">Part payment? Choose it below and enter the amount received.</div>' +
+    '<div class="acpay-row" style="align-items:flex-end;margin-top:4px"><div style="flex:1 1 140px"><label class="l" style="margin-top:0">Payment status</label>' +
       '<select data-pay-sel="' + esc(o.id) + '">' + PAY_STATUS_LIST.map(function(x){ return '<option value="' + x[0] + '"' + (cur === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>' +
       '<div style="flex:1 1 130px;' + (cur === 'partial' ? '' : 'display:none') + '" data-pay-amtbox><label class="l" style="margin-top:0">Amount received (₹)</label><input type="number" min="1" step="any" data-pay-amt value="' + (cur === 'partial' && paid > 0 ? paid : '') + '"></div>' +
       '<div style="flex:0 0 auto"><button type="button" class="btn-admin sm" data-pay-save="' + esc(o.id) + '">Save</button></div></div>' +
@@ -3469,10 +3484,11 @@ function updatePayBadge(){
   ORDERS_BADGE_LAST = n;
 }
 document.addEventListener('click', function(e){
-  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-pay-popup],[data-payfilter]') : null; if(!t) return;
+  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-pay-popup],[data-pay-quick],[data-payfilter]') : null; if(!t) return;
   var v;
   if((v = t.getAttribute('data-pay-open'))){ e.stopPropagation(); openPaySheet(v); }
   else if((v = t.getAttribute('data-pay-popup'))){ e.stopPropagation(); openAdminPaySheet(v); }
+  else if((v = t.getAttribute('data-pay-quick'))){ e.stopPropagation(); adminSetPayment(t.getAttribute('data-pay-for'), v, 0, ''); }
   else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); adminSetPayment(v, 'paid', 0, '', 'Confirmed received'); }
   else if((v = t.getAttribute('data-pay-save'))){
     e.stopPropagation();
@@ -5092,7 +5108,7 @@ function renderAdminOrders(){
           '<div data-toggle-order="'+esc(o.id)+'" style="cursor:pointer; min-width:0;"><div class="ord-id">#'+esc(o.id)+' · '+esc(o.dealerBusiness||o.dealerGst)+'</div>' +
             '<div class="ac-sub"><span class="ord-gstlink" data-ord-dealer="'+esc(o.dealerGst)+'" title="Show all orders of this dealer">'+esc(o.dealerGst)+'</span> · '+esc(o.date)+'</div></div>' +
           '<div class="ord-items">'+o.items.length+' item'+(o.items.length===1?'':'s')+'</div>' +
-          '<div class="ord-pay"><b>'+money(orderPayable(o))+'</b><div>'+payChipHtml(o)+'</div></div>' +
+          '<div class="ord-pay"><b>'+money(orderPayable(o))+'</b><div'+(o.status !== 'cancelled' ? ' data-pay-popup="'+esc(o.id)+'" style="cursor:pointer" title="Click to mark Paid / Not paid"' : '')+'>'+payChipHtml(o)+'</div></div>' +
           '<span class="status-pill st-'+esc(o.status)+'">'+esc(o.status.charAt(0).toUpperCase()+o.status.slice(1))+'</span>' +
           '<div class="ord-actions">' +
             (next ? '<button class="btn-admin sm" data-advance="'+esc(o.id)+'">Mark '+next.charAt(0).toUpperCase()+next.slice(1)+'</button>' : '') +
