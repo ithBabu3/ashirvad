@@ -3,7 +3,7 @@
    • js / css / fonts / Firebase SDK : saved copy first, refreshed quietly in the background
    • images (same site) : saved copy first, trimmed to the 120 newest
    Firestore / Auth traffic is NEVER touched here — Firebase keeps its own offline data. */
-var V = 'acx-v2', IMG = 'acx-img-v2';
+var V = 'acx-v3', IMG = 'acx-img-v3';
 self.addEventListener('install', function(e){ self.skipWaiting(); });
 self.addEventListener('activate', function(e){
   e.waitUntil(caches.keys().then(function(ks){ return Promise.all(ks.filter(function(k){ return k !== V && k !== IMG; }).map(function(k){ return caches.delete(k); })); }).then(function(){ return self.clients.claim(); }));

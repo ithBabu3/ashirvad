@@ -143,7 +143,7 @@ async function main() {
 
   if (cmd === 'check') {
     const db = admin.firestore();
-    const cols = ['admins', 'dealers', 'accounts', 'orders', 'payments', 'products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_notify', 'audit_log','distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'dist_logins', 'login_index', 'stock_totals', 'roles'];
+    const cols = ['admins', 'dealers', 'accounts', 'orders', 'products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_notify', 'audit_log','distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'dist_logins', 'login_index', 'stock_totals', 'roles'];
     console.log('Connected. Documents per collection:');
     for (const c of cols) { const s = await db.collection(c).count().get(); console.log('  ' + c.padEnd(22) + s.data().count); }
     const st = await db.doc('config/settings').get();

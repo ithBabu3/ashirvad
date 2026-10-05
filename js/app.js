@@ -117,8 +117,6 @@ var STRINGS = {
     "orders.subtotal":"Order value",
     "orders.payable":"Amount payable",
     "orders.invoice":"Invoice",
-    "account.creditLimit":"Credit Limit",
-    "account.outstanding":"Outstanding Balance",
     "orders.newDiscount":"🎁 A special discount was applied to this order!",
     "toast.newDiscount":"You have a new discount on an order!",
     "offer.title":"Offer Zone",
@@ -898,7 +896,7 @@ function saveCart(c){ localStorage.setItem(cartKey(), JSON.stringify(c)); }
 function getAllOrders(){
   try { return JSON.parse(localStorage.getItem('ac_orders') || '[]'); } catch(e){ return []; }
 }
-function saveAllOrders(list){ PAY_CACHE = null; localStorage.setItem('ac_orders', JSON.stringify(list)); }
+function saveAllOrders(list){ localStorage.setItem('ac_orders', JSON.stringify(list)); }
 function getOrders(){
   if(!session) return [];
   return getAllOrders().filter(function(o){ return o.dealerGst === session; });
@@ -1049,34 +1047,6 @@ function loadSettings(){
 }
 function saveSettings(s){ localStorage.setItem('ac_settings', JSON.stringify(s)); SETTINGS = s; }
 var SETTINGS = loadSettings();
-
-/* ---- Payments / credit ledger ---- */
-function loadPayments(){
-  try { var s = JSON.parse(localStorage.getItem('ac_payments') || 'null'); if(Array.isArray(s)) return s; } catch(e){}
-  return [];
-}
-function savePayments(list){ PAY_CACHE = null; localStorage.setItem('ac_payments', JSON.stringify(list)); PAYMENTS = list; }
-var PAYMENTS = loadPayments();
-function nextPaymentId(){ return PAYMENTS.reduce(function(m,p){ return Math.max(m,p.id); },0) + 1; }
-function paymentsForDealer(gst){ return PAYMENTS.filter(function(p){ return p.dealerGst === gst; }); }
-function totalPaymentsForDealer(gst){ return paymentsForDealer(gst).reduce(function(s,p){ return s + Number(p.amount||0); }, 0); }
-function totalPayableForDealer(gst){
-  return getAllOrders()
-    .filter(function(o){ return o.dealerGst === gst && o.status !== 'cancelled'; })
-    .reduce(function(s,o){ return s + orderPayable(o); }, 0);
-}
-function outstandingForDealer(gst){
-  return Math.round((totalPayableForDealer(gst) - totalPaymentsForDealer(gst)) * 100) / 100;
-}
-function recordPayment(gst, amount, orderId, note, extra){
-  amount = Number(amount);
-  if(!gst || !amount || amount <= 0) return false;
-  var entry = { id:nextPaymentId(), dealerGst:gst, orderId:orderId||'', amount:amount, note:note||'', date:new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) };
-  if(extra) Object.keys(extra).forEach(function(k){ if(extra[k] !== undefined && extra[k] !== '') entry[k] = extra[k]; });
-  PAYMENTS.push(entry);
-  savePayments(PAYMENTS);
-  return true;
-}
 
 /* ---- Wishlist ---- */
 function wishlistKey(){ return 'ac_wishlist_' + session; }
@@ -1509,6 +1479,7 @@ registerForm.addEventListener('submit', function(e){
       localStorage.setItem('ac_session', gst); CLOUD.reload();
     }).catch(function(err){
       errEl.textContent = err && err.code === 'ac/gst-exists' ? t('auth.err.gstExists')
+        : err && err.code === 'ac/duplicate' ? DUP_MSG
         : err && err.code === 'ac/phone-wrong-password' ? 'This phone number is already registered. Use the correct password, or log in and add a new business from your account.'
         : CLOUD.authMessage(err, t);
     }).then(function(){ if(rbtn) rbtn.disabled = false; });
@@ -1516,6 +1487,8 @@ registerForm.addEventListener('submit', function(e){
   }
   var users = getUsers();
   if(users[gst]){ errEl.textContent = t('auth.err.gstExists'); return; }
+  var ph10 = normalizePhone(phone);
+  if(Object.keys(users).some(function(g){ var x = users[g]; return (normalizePhone(x.phone) === ph10 || x.accountKey === ph10) && (sameAddr(x.address, address) || sameAddr(x.deliveryAddress, address)); })){ errEl.textContent = DUP_MSG; return; }
   var existingAcc = findAccountForPhone(phone);
   if(existingAcc && existingAcc.password !== pw){
     errEl.textContent = 'This phone number is already registered. Log in and add a new business from your account, or use the correct password.';
@@ -1533,6 +1506,177 @@ registerForm.addEventListener('submit', function(e){
   enterApp();
   showToast(t('toast.registered'));
 });
+
+/* ================= Forgot password (admin approves) + duplicate-registration guard =================
+   • Registration is refused when the GST number is already registered, or when the same phone number already has a
+     business with the same address (same dealer registering twice).
+   • Forgot password: the dealer enters phone + GST + address, the admin sees whether they match the registered profile and
+     approves or rejects; once approved the dealer chooses a new password on the same screen. */
+var DUP_MSG = 'This business is already registered (same phone number and address). Please log in — or use “Forgot password?” if you cannot remember the password.';
+function normAddr(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function sameAddr(a, b){ var x = normAddr(a), y = normAddr(b); return !!x && x === y; }
+/* does a reset request carry exactly the details of a registered dealer? */
+function resetMatch(req){
+  var u = getUsers()[String(req.gst || '').trim().toUpperCase()]; if(!u) return false;
+  var ph = normalizePhone(req.phone);
+  if(normalizePhone(u.phone) !== ph && String(u.accountKey || '') !== ph) return false;
+  return sameAddr(u.address, req.address) || sameAddr(u.deliveryAddress, req.address) || (u.addresses || []).some(function(a){ return sameAddr(a.text, req.address); });
+}
+var RESET = {
+  list_: function(){ try{ var l = JSON.parse(localStorage.getItem('ac_reset_requests') || '[]'); return Array.isArray(l) ? l : []; }catch(e){ return []; } },
+  save_: function(l){ localStorage.setItem('ac_reset_requests', JSON.stringify(l)); },
+  sent: function(){ try{ return JSON.parse(localStorage.getItem('ac_reset_sent') || 'null'); }catch(e){ return null; } },
+  setSent: function(o){ try{ if(o) localStorage.setItem('ac_reset_sent', JSON.stringify(o)); else localStorage.removeItem('ac_reset_sent'); }catch(e){} },
+  request: function(req){
+    if(CLOUD) return CLOUD.resetRequest(req);
+    var l = RESET.list_(), ph = normalizePhone(req.phone), cur = l.find(function(r){ return r.phone === ph; });
+    if(cur && (cur.status === 'pending' || cur.status === 'approved')){ var e = new Error('A request for this phone number is already open. Please wait for the admin, or check its status.'); e.code = 'ac/reset-exists'; return Promise.reject(e); }
+    var at = Date.now();
+    l = l.filter(function(r){ return r.phone !== ph; }); l.push({ id: ph, phone: ph, gst: req.gst, address: req.address, status: 'pending', at: at }); RESET.save_(l);
+    return Promise.resolve({ at: at });
+  },
+  status: function(phone, at){
+    if(CLOUD) return CLOUD.resetStatus(phone, at);
+    var r = RESET.list_().find(function(x){ return x.phone === normalizePhone(phone) && Number(x.at) === Number(at); });
+    return Promise.resolve({ status: r ? r.status : 'pending' });
+  },
+  complete: function(phone, pw){
+    if(CLOUD) return CLOUD.resetComplete(phone, pw);
+    var ph = normalizePhone(phone), l = RESET.list_(), r = l.find(function(x){ return x.phone === ph && x.status === 'approved'; });
+    if(!r){ var e = new Error('This reset is not approved, or it was already used.'); e.code = 'ac/reset-closed'; return Promise.reject(e); }
+    var accs = getAccounts(); if(accs[ph]){ accs[ph].password = pw; saveAccounts(accs); }
+    var users = getUsers(); Object.keys(users).forEach(function(g){ if(normalizePhone(users[g].phone) === ph || users[g].accountKey === ph) users[g].password = pw; }); saveUsers(users);
+    r.status = 'used'; RESET.save_(l);
+    return Promise.resolve();
+  },
+  list: function(){ return CLOUD ? CLOUD.resetList() : Promise.resolve(RESET.list_()); },
+  decide: function(req, approve){
+    if(CLOUD) return CLOUD.resetDecide(req, approve);
+    var l = RESET.list_(), r = l.find(function(x){ return x.phone === req.phone; });
+    if(r){ r.status = approve ? 'approved' : 'rejected'; r.decidedAt = Date.now(); RESET.save_(l); }
+    return Promise.resolve();
+  }
+};
+function openForgotPassword(){
+  var sent = RESET.sent();
+  var w = paySheet('<div id="fpBody"></div>');
+  var body = w.querySelector('#fpBody'), $f = function(id){ return body.querySelector('#' + id); };
+  var head = function(sub){ return '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🔑 Forgot password</h3><div class="sub">' + sub + '</div></div><button type="button" class="acpay-btn ghost" id="fpX" style="flex:none;padding:6px 12px">✕</button></div>'; };
+  var wireX = function(){ $f('fpX').onclick = paySheetClose; };
+  var pwBox = function(id, label){ return '<label class="l">' + label + '</label><input id="' + id + '" type="password" autocomplete="new-password">'; };
+  function formPane(pre){
+    pre = pre || {};
+    body.innerHTML = head('Enter your details exactly as you registered. The admin checks them and approves your request — then you can choose a new password here.') +
+      '<label class="l">Registered phone number</label><input id="fpPhone" type="tel" inputmode="numeric" maxlength="10" value="' + esc(pre.phone || '') + '">' +
+      '<label class="l">GST number</label><input id="fpGst" autocapitalize="characters" autocomplete="off" value="' + esc(pre.gst || '') + '">' +
+      '<label class="l">Registered business address</label><textarea id="fpAddr" rows="2">' + esc(pre.address || '') + '</textarea>' +
+      '<div class="acpay-err" id="fpErr"></div>' +
+      '<div class="acpay-row"><button type="button" class="acpay-btn green" id="fpSend">Send request to admin</button></div>' +
+      '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="fpHave">I already sent a request — check status</button></div>';
+    wireX();
+    $f('fpHave').onclick = function(){ var sd = RESET.sent(); if(sd) statusPane(sd); else { $f('fpErr').textContent = 'No request was sent from this device. Send one first.'; } };
+    $f('fpSend').onclick = function(){
+      var btn = $f('fpSend'), err = $f('fpErr'); err.textContent = '';
+      if(btn.disabled) return;
+      var req = { phone: $f('fpPhone').value.trim(), gst: $f('fpGst').value.trim().toUpperCase(), address: $f('fpAddr').value.trim() };
+      if(!/^[0-9]{10}$/.test(req.phone)){ err.textContent = t('auth.err.phoneInvalid'); return; }
+      if(!req.gst || req.address.length < 6){ err.textContent = 'Please fill in your GST number and registered address.'; return; }
+      if(!CLOUD && !resetMatch(req)){ err.textContent = 'These details do not match any registered dealer. Check the phone number, GST number and address exactly as you registered.'; return; }
+      btn.disabled = true;
+      RESET.request(req).then(function(res){
+        RESET.setSent({ phone: req.phone, at: res.at }); statusPane({ phone: req.phone, at: res.at }, 'Request sent ✔ — the admin will review it.');
+      }).catch(function(e){ err.textContent = (e && e.message) || 'Could not send the request. Please try again.'; btn.disabled = false; });
+    };
+  }
+  function statusPane(sd, note){
+    body.innerHTML = head('Request for ' + esc(sd.phone)) + '<div class="pay-block" id="fpState" style="margin-top:12px">' + esc(note || 'Checking…') + '</div><div class="acpay-err" id="fpErr"></div>' +
+      '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="fpAgain">↻ Check status</button><button type="button" class="acpay-btn ghost" id="fpNew">Send a new request</button></div>';
+    wireX();
+    $f('fpNew').onclick = function(){ formPane({ phone: sd.phone }); };
+    var check = function(){
+      var box = $f('fpState'); box.textContent = 'Checking…';
+      RESET.status(sd.phone, sd.at).then(function(r){
+        if(r.status === 'approved') return newPwPane(sd);
+        if(r.status === 'used'){ RESET.setSent(null); box.textContent = 'This reset was already used. Please log in with your new password.'; return; }
+        if(r.status === 'rejected'){ box.innerHTML = '❌ <b>Request rejected.</b> The admin could not verify your details. You can send a new request with the correct details.'; return; }
+        box.innerHTML = '⏳ <b>Waiting for admin approval.</b> Check again in a little while.';
+      }).catch(function(e){ box.textContent = 'Could not check right now — ' + ((e && e.message) || 'please try again.'); });
+    };
+    $f('fpAgain').onclick = check; check();
+  }
+  function newPwPane(sd){
+    body.innerHTML = head('✔ Approved — choose your new password.') + pwBox('fpPw', 'New password (min 6 characters)') + pwBox('fpPw2', 'Confirm new password') +
+      '<div class="acpay-err" id="fpErr"></div><div class="acpay-row"><button type="button" class="acpay-btn green" id="fpSet">Set new password</button></div>';
+    wireX();
+    $f('fpSet').onclick = function(){
+      var btn = $f('fpSet'), err = $f('fpErr'), a = $f('fpPw').value, b = $f('fpPw2').value; err.textContent = '';
+      if(btn.disabled) return;
+      if(a.length < 6){ err.textContent = 'Password must be at least 6 characters.'; return; }
+      if(a !== b){ err.textContent = t('auth.err.passwordMismatch'); return; }
+      btn.disabled = true;
+      RESET.complete(sd.phone, a).then(function(){
+        RESET.setSent(null); paySheetClose(); showToast('Password changed — please log in');
+        var lp = document.getElementById('loginPhone'); if(lp){ lp.value = sd.phone; var lw = document.getElementById('loginPassword'); if(lw){ lw.value = ''; lw.focus(); } }
+      }).catch(function(e){ err.textContent = e && e.code === 'auth/email-already-in-use' ? 'This reset was already used. Please log in.' : ((e && e.message) || 'Could not set the password.'); btn.disabled = false; });
+    };
+  }
+  if(sent && sent.phone) statusPane(sent); else formPane();
+}
+document.addEventListener('click', function(e){ var a = e.target.closest ? e.target.closest('#goForgot') : null; if(a){ e.preventDefault(); openForgotPassword(); } });
+
+/* ---- admin: password requests ---- */
+var RESET_PENDING = 0, RESET_LAST_CHECK = 0;
+function updateResetBadge(force){
+  if(!adminSession) return;
+  if(!force && Date.now() - RESET_LAST_CHECK < 30000) return;
+  RESET_LAST_CHECK = Date.now();
+  RESET.list().then(function(l){
+    RESET_PENDING = l.filter(function(r){ return r.status === 'pending'; }).length;
+    var b = document.querySelector('.admin-tabs button[data-atab="customers"]'); if(!b) return;
+    var c = b.querySelector('.tab-count');
+    if(RESET_PENDING > 0){ if(!c){ c = document.createElement('span'); c.className = 'tab-count'; b.appendChild(c); } c.textContent = String(RESET_PENDING); b.title = RESET_PENDING + ' password request' + (RESET_PENDING === 1 ? '' : 's') + ' waiting'; }
+    else if(c){ c.remove(); b.removeAttribute('title'); }
+    var rb = document.getElementById('resetReqCount'); if(rb) rb.textContent = RESET_PENDING ? ' (' + RESET_PENDING + ')' : '';
+  }).catch(function(){});
+}
+setInterval(function(){ if(adminSession) updateResetBadge(); }, 60000);
+function openResetRequests(){
+  var w = paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🔑 Password requests</h3><div class="sub">Approve only when the details match the registered profile.</div></div><button type="button" class="acpay-btn ghost" id="rrX" style="flex:none;padding:6px 12px">✕</button></div><div id="rrBody" style="margin-top:10px">Loading…</div>');
+  w.querySelector('#rrX').onclick = paySheetClose;
+  var body = w.querySelector('#rrBody');
+  function load(){
+    RESET.list().then(function(list){
+      var users = getUsers(), fmt = function(ts){ return new Date(Number(ts) || 0).toLocaleString('en-IN'); };
+      var pend = list.filter(function(r){ return r.status === 'pending'; }).sort(function(a, b){ return b.at - a.at; });
+      var done = list.filter(function(r){ return r.status !== 'pending'; }).sort(function(a, b){ return b.at - a.at; }).slice(0, 8);
+      RESET_PENDING = pend.length;
+      var row = function(r, actions){
+        var m = resetMatch(r), u = users[String(r.gst || '').trim().toUpperCase()];
+        return '<div class="pay-block" style="margin-top:8px"><div class="pb-row"><b>' + esc(u ? u.business : 'Unknown business') + '</b><span>' + fmt(r.at) + '</span></div>' +
+          '<div class="pb-msg">Phone: <b>' + esc(r.phone) + '</b><br>GST: <b>' + esc(r.gst) + '</b><br>Address given: ' + esc(r.address) + (u && !m ? '<br><span style="color:#6b7280">Registered address: ' + esc(u.address || '—') + '</span>' : '') + '</div>' +
+          '<div style="margin-top:6px">' + (m ? '<span class="pay-chip pay-paid">✔ Matches registered details</span>' : '<span class="pay-chip pay-unpaid">✖ Does not match registered details</span>') + '</div>' + (actions || '') + '</div>';
+      };
+      body.innerHTML = (pend.length ? pend.map(function(r){
+          var m = resetMatch(r);
+          return row(r, '<div class="acpay-row"><button type="button" class="acpay-btn green" data-rr-ok="' + esc(r.phone) + '"' + (m ? '' : ' disabled title="Details do not match"') + '>✔ Approve</button><button type="button" class="acpay-btn red" data-rr-no="' + esc(r.phone) + '">✕ Reject</button></div>');
+        }).join('') : '<div class="sub" style="padding:10px 0">No pending requests.</div>') +
+        (done.length ? '<div style="margin-top:14px"><b>Recent decisions</b>' + done.map(function(r){ return '<div class="oi-line" style="font-size:12.5px"><span>' + esc(r.phone) + ' · ' + esc(r.gst) + '</span><span>' + esc(r.status) + '</span></div>'; }).join('') + '</div>' : '');
+      var pb = document.getElementById('resetReqCount'); if(pb) pb.textContent = pend.length ? ' (' + pend.length + ')' : '';
+      body.querySelectorAll('[data-rr-ok],[data-rr-no]').forEach(function(btn){
+        btn.onclick = function(){
+          var ph = btn.getAttribute('data-rr-ok') || btn.getAttribute('data-rr-no'), ok = btn.hasAttribute('data-rr-ok');
+          var req = list.find(function(r){ return r.phone === ph; }); if(!req || btn.disabled) return;
+          if(ok && !resetMatch(req)){ showToast('Details do not match — cannot approve'); return; }
+          if(!ok && !confirm('Reject this request?')) return;
+          body.querySelectorAll('button').forEach(function(x){ x.disabled = true; });
+          RESET.decide(req, ok).then(function(){ logAudit(ok ? 'Password reset approved' : 'Password reset rejected', ph + ' · ' + req.gst); showToast(ok ? 'Approved — the dealer can now set a new password' : 'Request rejected'); load(); updateResetBadge(true); })
+            .catch(function(e){ showToast('Could not save: ' + ((e && e.message) || 'try again')); load(); });
+        };
+      });
+    }).catch(function(e){ body.textContent = 'Could not load requests: ' + ((e && e.message) || 'try again'); });
+  }
+  load();
+}
 
 function showBusinessSwitcher(gsts, onChoose){
   var users = getUsers();
@@ -3108,47 +3252,39 @@ function placeOrder(){
 
 /* ================= UPI payments for orders =================
    Free: the dealer pays YOUR UPI ID directly (no gateway, no fee). A UPI QR / "open UPI app" link carries the exact amount.
-   After paying, the dealer enters the UTR (bank reference). Admin checks the bank app / SMS and presses "Confirm received" —
-   that writes a normal ledger payment tied to the order, so the dealer's outstanding balance stays correct automatically.
+   After paying, the dealer enters the UTR (bank reference). Admin checks the bank app / SMS and presses "Confirm received",
+   or simply sets the order's payment status (Unpaid / Part paid / Paid) from the order details.
    order.payMode  'now' | 'later'              (dealer's choice at checkout)
    order.payClaim { status:'pending'|'confirmed'|'rejected', utr, amount, via, note, at, reason }   (dealer writes 'pending' only)
    order.payHistory [ {at, by, action, amount, utr, note} ]                                      (admin only)
-   Paid / part-paid / unpaid is ALWAYS derived from the ledger payments that carry this orderId. */
+   order.paymentStatus 'unpaid'|'partial'|'paid' and order.paidAmount (for partial) — set by admin only. */
 var CART_PAY_MODE = 'now';
 function r2(n){ return Math.round((Number(n)||0) * 100) / 100; }
 function qrImageOn(){ return SETTINGS.qrMode === 'image' && !!SETTINGS.qrImage; }
 function upiOn(){ return !!(SETTINGS.upiId && SETTINGS.payNowOn !== false); }
 function nowOn(){ return SETTINGS.payNowOn !== false && !!(SETTINGS.upiId || SETTINGS.payNote || qrImageOn()); }   // UPI QR, or just bank details if no UPI ID
 function laterOn(){ return SETTINGS.payLaterOn !== false; }
-var PAY_CACHE = null;
-/* What each order has received. Payments that name an order go to it; payments with no order (general credit on the dealer's account)
-   and any surplus are applied to that dealer's OLDEST unpaid orders first — exactly how the ledger balance already works. */
-function payAlloc(){
-  if(PAY_CACHE) return PAY_CACHE;
-  var orders = getAllOrders().filter(function(o){ return o.status !== 'cancelled'; }), byId = {}, got = {}, pool = {};
-  orders.forEach(function(o){ byId[o.id] = o; });
-  PAYMENTS.forEach(function(p){ var amt = Number(p.amount) || 0; if(p.orderId && byId[p.orderId]) got[p.orderId] = (got[p.orderId] || 0) + amt; else pool[p.dealerGst] = (pool[p.dealerGst] || 0) + amt; });
-  orders.forEach(function(o){ var due = orderPayable(o), g = got[o.id] || 0; if(g > due){ pool[o.dealerGst] = (pool[o.dealerGst] || 0) + (g - due); got[o.id] = due; } });
-  var tagged = {}; Object.keys(got).forEach(function(k){ tagged[k] = got[k]; });
-  orders.slice().sort(function(x, y){ return (Number(x.createdAt) || 0) - (Number(y.createdAt) || 0); }).forEach(function(o){
-    var need = orderPayable(o) - (got[o.id] || 0), av = pool[o.dealerGst] || 0;
-    if(need > 0.001 && av > 0){ var take = Math.min(need, av); got[o.id] = (got[o.id] || 0) + take; pool[o.dealerGst] = av - take; }
-  });
-  var out = { paid: {}, tagged: {} }; Object.keys(got).forEach(function(k){ out.paid[k] = r2(got[k]); out.tagged[k] = r2(tagged[k] || 0); });
-  return (PAY_CACHE = out);
+var PAY_STATUS_LIST = [['unpaid','Unpaid'],['partial','Part paid'],['paid','Paid']];
+function orderPaid(o){
+  if(!o || o.status === 'cancelled') return 0;
+  var due = orderPayable(o);
+  if(o.paymentStatus === 'paid') return due;
+  if(o.paymentStatus === 'partial') return Math.min(due, Math.max(0, r2(o.paidAmount)));
+  return 0;
 }
-function orderPaid(o){ return payAlloc().paid[o.id] || 0; }
-function orderPaidTagged(o){ return Math.min(orderPaid(o), payAlloc().tagged[o.id] || 0); }
 function orderBalance(o){ return Math.max(0, r2(orderPayable(o) - orderPaid(o))); }
 function payState(o){
   if(!o || o.status === 'cancelled') return 'cancelled';
-  var due = orderPayable(o), paid = orderPaid(o);
-  if(due > 0 && paid >= due - 0.5) return 'paid';
+  var s = o.paymentStatus;
+  if(s === 'paid') return 'paid';
+  if(s === 'partial') return 'partial';
   if(o.payClaim && o.payClaim.status === 'pending') return 'verify';
-  if(paid > 0) return 'partial';
+  if(s === 'unpaid') return 'unpaid';
   if(o.payClaim && o.payClaim.status === 'rejected') return 'rejected';
-  return o.payMode === 'now' ? 'unpaid' : 'later';       // orders from before this feature (no payMode) are simply "on account"
+  return o.payMode === 'now' ? 'unpaid' : 'later';       // orders with no status set yet
 }
+/* the value the admin's drop-down shows for an order */
+function payStatusForSelect(o){ var s = payState(o); return s === 'paid' || s === 'partial' ? s : 'unpaid'; }
 var PAY_TXT = { paid: '✔ Paid', partial: 'Part paid', verify: '⏳ Verifying', unpaid: 'Payment due', later: 'Pay later', rejected: 'Payment not found' };
 function payChipHtml(o){ var s = payState(o); return s === 'cancelled' ? '' : '<span class="pay-chip pay-' + s + '">' + PAY_TXT[s] + '</span>'; }
 function payFilterKey(o){ var s = payState(o); return s === 'rejected' ? 'unpaid' : s; }
@@ -3159,11 +3295,11 @@ function upiLink(amount, orderId){
 }
 function utrUsedElsewhere(utr, orderId){
   var u = String(utr || '').toUpperCase(); if(!u) return false;
-  return PAYMENTS.some(function(p){ return p.orderId !== orderId && String(p.utr || '').toUpperCase() === u; }) ||
-         getAllOrders().some(function(o){ return o.id !== orderId && o.payClaim && String(o.payClaim.utr || '').toUpperCase() === u; });
+  return getAllOrders().some(function(o){ return o.id !== orderId && o.payClaim && String(o.payClaim.utr || '').toUpperCase() === u; });
 }
 (function(){ if(document.getElementById('acPayCss')) return; var st = document.createElement('style'); st.id = 'acPayCss';
   st.textContent = [
+  '.tab-count{display:inline-block;min-width:18px;padding:0 6px;margin-left:6px;border-radius:99px;background:#d93025;color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;vertical-align:middle}',
   '.pay-chip{display:inline-block;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:700;white-space:nowrap}',
   '.pay-paid{background:#e4f5ea;color:#1e7b46}.pay-partial{background:#fff3d6;color:#8a5a00}.pay-verify{background:#e7f0ff;color:#2b4f9e}',
   '.pay-unpaid,.pay-rejected{background:#fde8e8;color:#b23b3b}.pay-later{background:#eceff4;color:#52607a}',
@@ -3212,7 +3348,6 @@ function payDealerBlockHtml(o){
   var canPay = bal > 0 && nowOn();
   return '<div class="pay-block"><div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div>' +
     (paid > 0 ? '<div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div>' : '') +
-    (paid - orderPaidTagged(o) > 0.5 ? '<div class="pb-msg" style="margin-top:0">Includes ' + money(paid - orderPaidTagged(o)) + ' adjusted from earlier payments on your account.</div>' : '') +
     (bal > 0 ? '<div class="pb-row"><span>Balance</span><b style="color:#b23b3b">' + money(bal) + '</b></div>' : '') +
     (msg ? '<div class="pb-msg">' + msg + '</div>' : '') +
     (canPay ? '<button type="button" class="btn-royal" style="margin-top:8px;padding:9px 14px;font-size:13.5px" data-pay-open="' + esc(o.id) + '">' + (s === 'verify' ? '✏ Update payment details' : '💳 Pay ' + money(bal) + ' now') + '</button>' : '') + '</div>';
@@ -3257,46 +3392,43 @@ function openPaySheet(orderId){
   };
 }
 
-/* ---- admin: payment panel in the order details, confirm / reject / record ---- */
+/* ---- admin: payment panel in the order details — set status, confirm / reject a dealer's claim ---- */
 function adminPayPanelHtml(o){
   if(o.status === 'cancelled') return '';
-  var s = payState(o), due = orderPayable(o), paid = orderPaid(o), bal = orderBalance(o), cl = o.payClaim || {};
-  var pays = PAYMENTS.filter(function(p){ return p.orderId === o.id; });
+  var s = payState(o), due = orderPayable(o), paid = orderPaid(o), bal = orderBalance(o), cl = o.payClaim || {}, cur = payStatusForSelect(o);
   var claim = (cl.status === 'pending') ? '<div class="pay-block" style="background:#eef3ff;border-color:#c9d8ff"><b>⏳ Dealer says he paid ' + money(cl.amount) + '</b>' + (cl.via ? ' via ' + esc(cl.via) : '') + '<div class="pb-msg">Reference: <b>' + esc(cl.utr || '—') + '</b> · ' + new Date(cl.at || 0).toLocaleString('en-IN') + (cl.note ? '<br>Note: ' + esc(cl.note) : '') +
     (utrUsedElsewhere(cl.utr, o.id) ? '<br><b style="color:#b23b3b">⚠ This reference number appears on another order.</b>' : '') + '</div>' +
-    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn-admin sm" data-pay-confirm="' + esc(o.id) + '">✔ Confirm received</button><button type="button" class="btn-admin sm maroon" data-pay-reject="' + esc(o.id) + '">✕ Not received</button></div></div>' : '';
-  return '<div class="pay-block" style="margin:8px 12px"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn-admin sm" data-pay-confirm="' + esc(o.id) + '">✔ Confirm received (mark Paid)</button><button type="button" class="btn-admin sm maroon" data-pay-reject="' + esc(o.id) + '">✕ Not received</button></div></div>' : '';
+  return '<div class="pay-block" style="margin:8px 12px" data-pay-oid="' + esc(o.id) + '"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
     '<div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div><div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div><div class="pb-row"><span>Balance</span><b style="color:' + (bal > 0 ? '#b23b3b' : '#1e7b46') + '">' + money(bal) + '</b></div>' +
     '<div class="pb-msg">Dealer chose: <b>' + (o.payMode === 'later' ? 'Pay later' : o.payMode === 'now' ? 'Pay now' : '—') + '</b></div>' + claim +
-    (paid - orderPaidTagged(o) > 0.5 ? '<div class="acpay-hist">ℹ ' + money(paid - orderPaidTagged(o)) + ' of the received amount was applied automatically from general payments on this dealer\'s account (oldest orders first).</div>' : '') +
-    (pays.length ? '<div class="acpay-hist"><b>Payments recorded against this order</b><br>' + pays.map(function(p){ return '• ' + money(p.amount) + ' · ' + esc(p.date || '') + (p.method ? ' · ' + esc(p.method) : '') + (p.utr ? ' · ref ' + esc(p.utr) : '') + (p.by ? ' · by ' + esc(p.by) : ''); }).join('<br>') + '</div>' : '') +
-    ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') +
-    (bal > 0 ? '<div style="margin-top:8px"><button type="button" class="btn-admin sm outline" data-pay-record="' + esc(o.id) + '">＋ Record a payment (cash / bank / UPI)</button></div>' : '') + '</div>';
+    '<div class="acpay-row" style="align-items:flex-end;margin-top:10px"><div style="flex:1 1 140px"><label class="l" style="margin-top:0">Payment status</label>' +
+      '<select data-pay-sel="' + esc(o.id) + '">' + PAY_STATUS_LIST.map(function(x){ return '<option value="' + x[0] + '"' + (cur === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select></div>' +
+      '<div style="flex:1 1 130px;' + (cur === 'partial' ? '' : 'display:none') + '" data-pay-amtbox><label class="l" style="margin-top:0">Amount received (₹)</label><input type="number" min="1" step="any" data-pay-amt value="' + (cur === 'partial' && paid > 0 ? paid : '') + '"></div>' +
+      '<div style="flex:0 0 auto"><button type="button" class="btn-admin sm" data-pay-save="' + esc(o.id) + '">Save</button></div></div>' +
+    ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') + '</div>';
 }
 function payAdminName(){ return (window.AC_CLOUD && AC_CLOUD.staffName) || localStorage.getItem('ac_admin_user') || 'admin'; }
-function openPayRecordSheet(orderId, fromClaim){
-  var o = findOrder(orderId); if(!o) return;
-  var bal = orderBalance(o), cl = fromClaim ? (o.payClaim || {}) : {};
-  paySheet('<h3>' + (fromClaim ? 'Confirm payment received' : 'Record a payment') + '</h3><div class="sub">Order #' + esc(o.id) + ' · ' + esc(o.dealerBusiness || o.dealerGst) + ' · balance ' + money(bal) + '</div>' +
-    '<label class="l">Amount received (₹)</label><input id="apyAmt" type="number" step="any" min="1" value="' + (cl.amount || bal) + '">' +
-    '<label class="l">Method</label><select id="apyVia">' + ['UPI', 'Bank transfer', 'Cash', 'Cheque'].map(function(m){ return '<option' + (cl.via === m ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' +
-    '<label class="l">UTR / reference no.</label><input id="apyUtr" value="' + esc(cl.utr || '') + '"><label class="l">Note</label><input id="apyNote">' +
-    '<div class="acpay-err" id="apyErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="apyX">Cancel</button><button type="button" class="acpay-btn green" id="apyOk">✔ Save payment</button></div>');
-  var $ = function(id){ return document.getElementById(id); };
-  $('apyX').onclick = paySheetClose;
-  $('apyOk').onclick = function(){
-    var amt = r2($('apyAmt').value), utr = $('apyUtr').value.trim(), err = $('apyErr'); err.textContent = '';
-    if(!(amt > 0)){ err.textContent = 'Enter the amount.'; return; }
-    if(amt > bal + 0.5 && !confirm('This is more than the balance (' + money(bal) + '). Record anyway?')) return;
-    if(utr && utrUsedElsewhere(utr, o.id) && !confirm('This reference number is already on another order/payment. Record anyway?')) return;
-    var okBtn = $('apyOk'); if(okBtn.disabled) return; okBtn.disabled = true;
-    var by = payAdminName(), fresh = findOrder(o.id);
-    recordPayment(fresh.dealerGst, amt, fresh.id, 'Order #' + fresh.id + (utr ? ' · ref ' + utr : ''), { utr: utr, method: $('apyVia').value, by: by, orderRef: fresh.id });
-    if(fresh.payClaim && fresh.payClaim.status === 'pending') fresh.payClaim.status = 'confirmed';
-    fresh.payHistory = (fresh.payHistory || []).concat([{ at: Date.now(), by: by, action: fromClaim ? 'Confirmed received' : 'Payment recorded', amount: amt, utr: utr, note: $('apyNote').value.trim() }]);
-    saveOrder(fresh); logAudit('Payment received', '#' + fresh.id + ' · ' + money(amt) + (utr ? ' · ref ' + utr : '') + ' · ' + $('apyVia').value);
-    paySheetClose(); showToast('Payment recorded ✔'); if(adminSession) renderAdminOrders();
-  };
+/* The one place that changes an order's payment status (admin only). */
+function adminSetPayment(orderId, status, amount, note, actionLabel){
+  var o = findOrder(orderId); if(!o) return false;
+  var due = orderPayable(o), amt = r2(amount);
+  if(PAY_STATUS_LIST.every(function(x){ return x[0] !== status; })) return false;
+  if(status === 'partial'){
+    if(!(amt > 0)){ showToast('Enter the amount received'); return false; }
+    if(amt >= due - 0.5) status = 'paid';
+  }
+  o.paymentStatus = status;
+  if(status === 'partial') o.paidAmount = amt; else delete o.paidAmount;
+  if(o.payClaim && o.payClaim.status === 'pending'){
+    o.payClaim.status = status === 'unpaid' ? 'rejected' : 'confirmed';
+    if(status === 'unpaid') o.payClaim.reason = 'Marked unpaid by admin';
+  }
+  var label = actionLabel || ('Marked ' + (status === 'paid' ? 'Paid' : status === 'partial' ? 'Part paid' : 'Unpaid'));
+  o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: label, amount: status === 'partial' ? amt : (status === 'paid' ? due : 0), note: note || '' }]);
+  saveOrder(o); logAudit('Payment status', '#' + o.id + ' → ' + status + (status === 'partial' ? ' (' + money(amt) + ')' : ''));
+  showToast('Payment status saved ✔'); if(adminSession) renderAdminOrders();
+  return true;
 }
 function payRejectClaim(orderId){
   var o = findOrder(orderId); if(!o || !o.payClaim) return;
@@ -3305,17 +3437,28 @@ function payRejectClaim(orderId){
   o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: 'Marked not received', amount: o.payClaim.amount, utr: o.payClaim.utr, note: why }]);
   saveOrder(o); logAudit('Payment not received', '#' + o.id + (o.payClaim.utr ? ' · ref ' + o.payClaim.utr : '')); showToast('Dealer will see it as not received'); if(adminSession) renderAdminOrders();
 }
+/* red number on the admin "Orders" tab = orders that have been received (placed) and are waiting to be confirmed */
+var ORDERS_BADGE_LAST = null;
+function newOrderCount(){ return getAllOrders().filter(function(o){ return o.status === 'placed'; }).length; }
 function updatePayBadge(){
   var b = document.querySelector('.admin-tabs button[data-atab="orders"]'); if(!b) return;
-  if(!b.getAttribute('data-base')) b.setAttribute('data-base', b.textContent.replace(/\s*\(\d+💳\)$/, ''));
-  var n = payVerifyCount(); b.textContent = b.getAttribute('data-base') + (n ? ' (' + n + '💳)' : '');
+  var n = newOrderCount(), c = b.querySelector('.tab-count');
+  if(n > 0){ if(!c){ c = document.createElement('span'); c.className = 'tab-count'; b.appendChild(c); } c.textContent = n > 99 ? '99+' : String(n); b.title = n + ' new order' + (n === 1 ? '' : 's') + ' waiting'; }
+  else if(c){ c.remove(); b.removeAttribute('title'); }
+  if(ORDERS_BADGE_LAST !== null && n > ORDERS_BADGE_LAST && adminSession) showToast('🧾 New order received');
+  ORDERS_BADGE_LAST = n;
 }
 document.addEventListener('click', function(e){
-  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-record],[data-payfilter]') : null; if(!t) return;
+  var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-payfilter]') : null; if(!t) return;
   var v;
   if((v = t.getAttribute('data-pay-open'))){ e.stopPropagation(); openPaySheet(v); }
-  else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); openPayRecordSheet(v, true); }
-  else if((v = t.getAttribute('data-pay-record'))){ e.stopPropagation(); openPayRecordSheet(v, false); }
+  else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); adminSetPayment(v, 'paid', 0, '', 'Confirmed received'); }
+  else if((v = t.getAttribute('data-pay-save'))){
+    e.stopPropagation();
+    var box = t.closest('[data-pay-oid]'); if(!box) return;
+    var sel = box.querySelector('[data-pay-sel]'), amt = box.querySelector('[data-pay-amt]');
+    adminSetPayment(v, sel.value, amt ? amt.value : 0, '');
+  }
   else if((v = t.getAttribute('data-pay-reject'))){ e.stopPropagation(); payRejectClaim(v); }
   else if((v = t.getAttribute('data-payfilter'))){ ORDER_UI.pay = ORDER_UI.pay === v ? 'all' : v; ORDER_UI.page = 1; renderAdminOrders(); }
 }, true);
@@ -3323,8 +3466,9 @@ document.addEventListener('change', function(e){
   var t = e.target;
   if(t && t.name === 'acPayMode'){ CART_PAY_MODE = t.value; var box = t.closest('.pay-choice'); if(box){ box.querySelectorAll('label').forEach(function(l){ l.classList.toggle('on', l.querySelector('input').checked); }); var nt = box.querySelector('.pc-note'); if(nt) nt.textContent = payNoteFor(t.value) || ''; } }
   else if(t && t.id === 'ordPayFilter'){ ORDER_UI.pay = t.value; ORDER_UI.page = 1; renderAdminOrders(); }
+  else if(t && t.hasAttribute && t.hasAttribute('data-pay-sel')){ var bx = t.closest('[data-pay-oid]'), ab = bx && bx.querySelector('[data-pay-amtbox]'); if(ab) ab.style.display = t.value === 'partial' ? '' : 'none'; }
 });
-setInterval(function(){ if(adminSession) updatePayBadge(); }, 20000);
+setInterval(function(){ if(adminSession) updatePayBadge(); }, 5000);
 
 /* ================= Dealer tools: quick order (paste a list), cart nudges, quote maker =================
    Everything here runs in the browser on data the app already loaded — ZERO extra Firestore reads or writes,
@@ -3342,10 +3486,10 @@ setInterval(function(){ if(adminSession) updatePayBadge(); }, 20000);
   '.qo-hint{font-size:11.5px;color:#52607a;margin-top:3px}.qo-res{margin-top:4px}.qo-res button{display:block;width:100%;text-align:left;border:1px solid #e1e6f0;background:#fff;border-radius:8px;padding:7px 9px;margin-top:3px;font-size:12.5px;cursor:pointer}',
   '.qt-item{display:grid;grid-template-columns:1fr auto;gap:4px 8px;border-top:1px solid #eef0f5;padding:8px 0}.qt-item input{width:84px;padding:7px;text-align:right}.qt-sub{font-size:11.5px;color:#6b7280}',
   '.qt-priv{background:#f3f9f5;border:1px dashed #9fd2b2;border-radius:10px;padding:8px 10px;font-size:12.5px;margin-top:8px}',
-  '.acq-print{display:none}',
-  '@media print{body>*:not(.acq-print){display:none!important}.acq-print{display:block!important;position:static!important;background:#fff;color:#111}}',
-  '.acq-doc{font-family:Arial,Helvetica,sans-serif;font-size:13px;max-width:780px;margin:0 auto;padding:18px}.acq-doc h1{font-size:22px;margin:0}.acq-doc table{width:100%;border-collapse:collapse;margin-top:12px}',
-  '.acq-doc th{background:#17325c;color:#fff;text-align:left;padding:7px;font-size:12px}.acq-doc td{border-bottom:1px solid #ddd;padding:7px;vertical-align:top}.acq-doc .r{text-align:right}'
+  '.qt-sec{border:1px solid #e6e9f2;border-radius:12px;padding:10px 12px;margin-top:10px;background:#fcfdff}',
+  '.qt-chk{display:flex;gap:8px;align-items:center;margin:8px 0 0;font-size:13px;cursor:pointer}.qt-chk input{width:18px;height:18px;flex:none;padding:0}',
+  '.qt-logo{width:132px;height:68px;border:1.5px dashed #c5cde0;border-radius:10px;display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden}.qt-logo img{max-width:100%;max-height:100%;object-fit:contain;display:block}',
+  '.qt-note{background:#f3f9f5;border:1px solid #bfe0cb;border-radius:10px;padding:10px 12px;font-size:12.5px;margin-top:10px}.qt-note a{color:#fff;text-decoration:none}'
   ].join('\n'); document.head.appendChild(st); })();
 function toolSheet(html, wide){ var w = paySheet(html); if(wide && w.firstChild) w.firstChild.classList.add('wide'); return w; }
 function $t(id){ return document.getElementById(id); }
@@ -3487,8 +3631,6 @@ function cartNudgesHtml(cart, total, freeMin, grandTotal){
   var h = '';
   if(freeMin > 0){ var pct = total / freeMin * 100; h += '<div class="nd-box">' + (total >= freeMin ? '🎉 <b>Free delivery unlocked</b>' : '🚚 Add <b>' + money(freeMin - total) + '</b> more for free delivery') + nudgeBar(pct, total >= freeMin ? 'green' : '') + '</div>'; }
   slabNudges(cart).forEach(function(n){ h += '<div class="nudge"><span>💡 Add <b>' + n.need + '</b> more <b>' + esc(n.p.name) + '</b> → extra ' + n.bonus + '% off, you save about <b>' + money(n.save) + '</b></span><button type="button" data-nudge-add="' + n.p.id + '" data-nudge-qty="' + n.need + '">+' + n.need + '</button></div>'; });
-  var u = getUsers()[session] || {}, limit = Number(u.creditLimit) || 0;
-  if(limit > 0){ var after = outstandingForDealer(session) + grandTotal, pc = after / limit * 100; h += '<div class="nd-box">💳 Credit: this order takes your balance to <b>' + money(after) + '</b> of <b>' + money(limit) + '</b>' + nudgeBar(pc, pc > 100 ? 'red' : pc > 80 ? 'amber' : 'green') + (pc > 100 ? '<span style="color:#b23b3b">Over your limit by ' + money(after - limit) + ' — please pay some dues first.</span>' : '') + '</div>'; }
   var tg = Number(SETTINGS.monthTarget) || 0;
   if(tg > 0){ var spent = monthSpend(session), now = spent + grandTotal, left = tg - now; h += '<div class="nd-box">🎯 <b>Monthly target</b> ' + money(Math.min(now, tg)) + ' of ' + money(tg) + (left > 0 ? ' — <b>' + money(left) + '</b> to go' : ' — <b>reached! 🎉</b>') + (SETTINGS.monthReward ? '<div class="sub" style="color:#52607a">' + esc(SETTINGS.monthReward) + '</div>' : '') + nudgeBar(now / tg * 100, now >= tg ? 'green' : '') + '</div>'; }
   return h;
@@ -3505,87 +3647,342 @@ document.addEventListener('click', function(e){
   var c = getCart(), stock = effStock(p), cur = c[id] || 0; c[id] = stock === Infinity ? cur + n : Math.min(stock, cur + n); saveCart(c); updateCartBadges(); renderProductGrids(); renderCartPanel();
 }, true);
 
-/* ---- quote maker: the dealer's own price quote for HIS customer (margin on top of his cost) ---- */
-var QT = { items: [], margin: 15, round: 1, customer: '', phone: '', notes: '', days: 7, showGst: false, q: '' };
+/* ---- quote maker: the dealer's own price quote for HIS customer ----
+   Output is a PDF only (made in the browser with the bundled jsPDF — nothing is uploaded anywhere).
+   Everything it remembers (logo, last settings) stays in THIS browser's localStorage; none of it is synced to the cloud. */
+var QT = { items: [], margin: 0, round: 0, customer: '', phone: '', notes: '', days: 7, gstMode: 'incl', deliveryOn: false, delivery: 0, discOn: false, discType: 'flat', discValue: 0, watermark: false, no: null };
 function qtPrefs(){ try{ return JSON.parse(localStorage.getItem('ac_quote_prefs_' + session) || '{}') || {}; }catch(e){ return {}; } }
-function qtSavePrefs(){ try{ localStorage.setItem('ac_quote_prefs_' + session, JSON.stringify({ margin: QT.margin, round: QT.round, days: QT.days, showGst: QT.showGst, notes: QT.notes })); }catch(e){} }
+function qtSavePrefs(){ try{ localStorage.setItem('ac_quote_prefs_' + session, JSON.stringify({ round: QT.round, days: QT.days, gstMode: QT.gstMode, notes: QT.notes, watermark: QT.watermark })); }catch(e){} }
+function qtLogo(){ try{ var l = JSON.parse(localStorage.getItem('ac_quote_logo_' + session) || 'null'); return l && l.d && l.w > 0 && l.h > 0 ? l : null; }catch(e){ return null; } }
+function qtSaveLogo(l){ try{ if(l) localStorage.setItem('ac_quote_logo_' + session, JSON.stringify(l)); else localStorage.removeItem('ac_quote_logo_' + session); return true; }catch(e){ return false; } }
+function qtNum(v){ var n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
+function qtProd(id){ return PRODUCTS.find(function(x){ return x.id === id; }); }
 function qtRound(v){ var s = Number(QT.round) || 0; return s > 0 ? Math.ceil(v / s - 1e-9) * s : r2(v); }
-function qtCost(it){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); return p ? finalPrice(p, session, it.qty) : 0; }
+function qtCost(it){ var p = qtProd(it.id); return p ? finalPrice(p, session, it.qty) : 0; }
 function qtRecalc(){ QT.items.forEach(function(it){ if(!it.manual) it.price = qtRound(qtCost(it) * (1 + QT.margin / 100)); }); }
-function qtTotals(){
-  var sell = 0, cost = 0, taxable = 0;
-  QT.items.forEach(function(it){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return; var line = (Number(it.price) || 0) * it.qty; sell += line; cost += qtCost(it) * it.qty; taxable += line / (1 + (Number(p.gstPct) || 0) / 100); });
-  return { sell: r2(sell), cost: r2(cost), profit: r2(sell - cost), pct: cost > 0 ? r2((sell - cost) / cost * 100) : 0, taxable: r2(taxable), gst: r2(sell - taxable) };
+function qtItemName(p){ return p.name + (p.size && p.name.indexOf(p.size) < 0 ? ' (' + p.size + ')' : ''); }
+
+/* One place that does all the quote arithmetic (screen summary AND pdf use it).
+   Prices are GST-inclusive. The discount is spread over the GST rates in proportion to their value, and every figure is rounded
+   to paise so that the rows always add up exactly to the total. */
+function qtCalc(){
+  var lines = [], sumG = 0, cost = 0;
+  QT.items.forEach(function(it){
+    var p = qtProd(it.id); if(!p) return;
+    var price = qtNum(it.price), qty = Math.max(1, Math.floor(Number(it.qty)) || 1), g = r2(price * qty);
+    lines.push({ it: it, p: p, qty: qty, price: price, gross: g, rate: Number(p.gstPct) || 0, cost: qtCost(it) });
+    sumG += g; cost += qtCost(it) * qty;
+  });
+  sumG = r2(sumG); cost = r2(cost);
+  var D = 0, capped = false;
+  if(QT.discOn){
+    var v = qtNum(QT.discValue);
+    if(QT.discType === 'pct'){ if(v > 100){ v = 100; capped = true; } D = sumG * v / 100; }
+    else { if(v > sumG){ v = sumG; capped = true; } D = v; }
+  }
+  D = r2(D);
+  var net = r2(sumG - D), rates = [], gross = {};
+  lines.forEach(function(l){ if(gross[l.rate] === undefined){ gross[l.rate] = 0; rates.push(l.rate); } gross[l.rate] = r2(gross[l.rate] + l.gross); });
+  rates.sort(function(a, b){ return a - b; });
+  var gstBy = [], allocD = 0, itemsEx = 0, taxable = 0, gstTotal = 0;
+  rates.forEach(function(r, i){
+    var G = gross[r], Dr = i === rates.length - 1 ? r2(D - allocD) : r2(sumG > 0 ? D * G / sumG : 0);
+    Dr = Math.min(G, Math.max(0, Dr)); allocD = r2(allocD + Dr);
+    var netR = r2(G - Dr), tx = r2(netR / (1 + r / 100)), gs = r2(netR - tx), exG = r2(G / (1 + r / 100));
+    itemsEx = r2(itemsEx + exG); taxable = r2(taxable + tx); gstTotal = r2(gstTotal + gs);
+    gstBy.push({ rate: r, taxable: tx, gst: gs });
+    var inRate = lines.filter(function(l){ return l.rate === r; }), acc = 0;     // line amounts (ex-GST) add up exactly to exG
+    inRate.forEach(function(l, k){ l.exAmt = k === inRate.length - 1 ? r2(exG - acc) : r2(l.gross / (1 + r / 100)); acc = r2(acc + l.exAmt); l.exRate = r2(l.price / (1 + r / 100)); });
+  });
+  var delivery = QT.deliveryOn ? r2(qtNum(QT.delivery)) : 0, grand = r2(net + delivery), profit = r2(net - cost);
+  return { lines: lines, sumG: sumG, disc: D, capped: capped, net: net, itemsEx: itemsEx, discEx: r2(itemsEx - taxable), taxable: taxable, gstTotal: gstTotal, gstBy: gstBy,
+           delivery: delivery, grand: grand, cost: cost, profit: profit, pct: cost > 0 ? r2(profit / cost * 100) : 0 };
 }
+function qtMeta(){
+  var u = getUsers()[session] || {}, d = new Date(), vt = new Date(Date.now() + QT.days * 86400000);
+  var f = function(x){ return x.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); };
+  return { u: u, date: f(d), valid: f(vt), no: QT.no || (QT.no = qtNumber()) };
+}
+function qtNumber(){ var k = 'ac_quote_seq_' + session, n = Number(localStorage.getItem(k) || '0') + 1; try{ localStorage.setItem(k, String(n)); }catch(e){} var d = new Date(); return 'Q' + String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(n).padStart(3, '0'); }
+
+/* logo: ONE image, shrunk to at most 700 px on its long side and kept in this browser only */
+function qtReadLogo(file){
+  return new Promise(function(res, rej){
+    if(!file || !/^image\//.test(file.type)){ rej(new Error('Please choose an image file (JPG, PNG or WEBP).')); return; }
+    if(file.size > 8 * 1024 * 1024){ rej(new Error('That image is too large (max 8 MB).')); return; }
+    var fr = new FileReader();
+    fr.onerror = function(){ rej(new Error('Could not read that image.')); };
+    fr.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ rej(new Error('That file is not a valid image.')); };
+      img.onload = function(){
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if(!w || !h){ rej(new Error('That file is not a valid image.')); return; }
+        var sc = Math.min(1, 700 / Math.max(w, h)), cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+        function draw(white){ var cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; var cx = cv.getContext('2d'); if(white){ cx.fillStyle = '#fff'; cx.fillRect(0, 0, cw, ch); } cx.drawImage(img, 0, 0, cw, ch); return cv; }
+        var keepAlpha = /png|gif|webp|svg/.test(file.type), url = keepAlpha ? draw(false).toDataURL('image/png') : draw(true).toDataURL('image/jpeg', 0.88);
+        if(keepAlpha && url.length > 900000) url = draw(true).toDataURL('image/jpeg', 0.88);     // a very heavy PNG: store a lighter JPEG instead
+        if(!/^data:image\/(png|jpeg)/.test(url)){ rej(new Error('This image type is not supported. Try a JPG or PNG.')); return; }
+        res({ d: url, w: cw, h: ch });
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+
+/* jsPDF is loaded only when a dealer opens the quote maker */
+var JSPDF_P = null;
+function ensureJsPdf(){
+  if(window.jspdf && window.jspdf.jsPDF) return Promise.resolve();
+  if(JSPDF_P) return JSPDF_P;
+  var ref = document.querySelector('script[src*="vendor/xlsx.mini.js"]'), src = ref ? ref.src.replace('xlsx.mini.js', 'jspdf.umd.min.js') : 'js/vendor/jspdf.umd.min.js';
+  JSPDF_P = new Promise(function(res, rej){
+    var s = document.createElement('script'); s.src = src;
+    s.onload = function(){ (window.jspdf && window.jspdf.jsPDF) ? res() : rej(new Error('PDF tool did not start')); };
+    s.onerror = function(){ JSPDF_P = null; rej(new Error('Could not load the PDF tool — check your internet connection and try again.')); };
+    document.head.appendChild(s);
+  });
+  return JSPDF_P;
+}
+function qtPdfText(s){ return String(s == null ? '' : s).replace(/₹/g, 'Rs.').replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-').replace(/\u00A0/g, ' ').replace(/[^\x0A\x20-\x7E\xA1-\xFF]/g, ''); }
+function qtMoney(n){ return 'Rs. ' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function qtImgFmt(d){ return /^data:image\/png/.test(d) ? 'PNG' : 'JPEG'; }
+function qtWrap(doc, text, w){                       /* wraps at spaces, and breaks a very long word instead of letting it run off the page */
+  var out = [];
+  String(text).split('\n').forEach(function(par){
+    var lines = par === '' ? [''] : doc.splitTextToSize(par, w);
+    lines.forEach(function(ln){
+      if(doc.getTextWidth(ln) <= w + 0.01){ out.push(ln); return; }
+      var cur = ''; for(var i = 0; i < ln.length; i++){ var t = cur + ln[i]; if(doc.getTextWidth(t) > w && cur){ out.push(cur); cur = ln[i]; } else cur = t; }
+      if(cur) out.push(cur);
+    });
+  });
+  return out;
+}
+function qtValidate(){
+  var c = qtCalc();
+  if(!c.lines.length) return 'Add at least one item';
+  for(var i = 0; i < c.lines.length; i++) if(!(c.lines[i].price > 0)) return 'Set a selling price for “' + qtItemName(c.lines[i].p) + '”';
+  var ph = String(QT.phone || '').replace(/\D/g, '');
+  if(ph && ph.length !== 10 && !(ph.length === 12 && ph.indexOf('91') === 0)) return 'Customer phone should be 10 digits (or leave it blank)';
+  return '';
+}
+
+function qtBuildPdf(){
+  var J = window.jspdf.jsPDF, doc = new J({ unit: 'mm', format: 'a4', compress: true });
+  var m = qtMeta(), c = qtCalc(), u = m.u, logo = qtLogo(), sep = QT.gstMode === 'sep';
+  var PW = 210, PH = 297, ML = 14, CW = 182, BOT = 272, RX = PW - 14, y = 14;
+  var T = qtPdfText, NAVY = [23, 50, 92], GREY = [110, 118, 135], DARK = [28, 33, 45];
+  function font(size, style, col){ doc.setFont('helvetica', style || 'normal'); doc.setFontSize(size); var k = col || DARK; doc.setTextColor(k[0], k[1], k[2]); }
+  function watermark(){
+    if(!QT.watermark) return;
+    doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.08 }));
+    if(logo){ var s = Math.min(125 / logo.w, 125 / logo.h), dw = logo.w * s, dh = logo.h * s; doc.addImage(logo.d, qtImgFmt(logo.d), (PW - dw) / 2, (PH - dh) / 2, dw, dh); }
+    else { var txt = T(u.business || 'Quotation'), sz = 54; font(sz, 'bold', NAVY); var tw = doc.getTextWidth(txt); if(tw > 150){ sz = Math.max(16, sz * 150 / tw); font(sz, 'bold', NAVY); } doc.text(txt, PW / 2, PH / 2, { align: 'center', angle: 35 }); }
+    doc.restoreGraphicsState();
+  }
+  function newPage(){ doc.addPage(); watermark(); y = 14; }
+  watermark();
+
+  /* ---- header: logo + business on the left, quotation details on the right ---- */
+  if(logo){ var s0 = Math.min(46 / logo.w, 22 / logo.h), lw = logo.w * s0, lh = logo.h * s0; doc.addImage(logo.d, qtImgFmt(logo.d), ML, y, lw, lh); y += lh + 3; }
+  font(15, 'bold', NAVY);
+  qtWrap(doc, T(u.business || 'Quotation'), 108).forEach(function(ln){ y += 6; font(15, 'bold', NAVY); doc.text(ln, ML, y); });
+  font(9, 'normal', DARK);
+  if(u.address) qtWrap(doc, T(u.address), 108).forEach(function(ln){ y += 4.4; font(9, 'normal', DARK); doc.text(ln, ML, y); });
+  var contact = (u.phone ? 'Phone: ' + u.phone : '') + (u.phone && u.gst ? '   |   ' : '') + (u.gst ? 'GSTIN: ' + u.gst : '');
+  if(contact){ y += 4.4; font(9, 'normal', DARK); doc.text(T(contact), ML, y); }
+  font(18, 'bold', NAVY); doc.text('QUOTATION', RX, 21, { align: 'right' });
+  [['Quotation No.', m.no], ['Date', m.date], ['Valid till', m.valid]].forEach(function(r, i){
+    var by = 29 + i * 5.4; font(9, 'normal', GREY); doc.text(r[0], 134, by); font(9.5, 'bold', DARK); doc.text(T(r[1]), RX, by, { align: 'right' });
+  });
+  y = Math.max(y, 44) + 4;
+  doc.setDrawColor(210, 215, 226); doc.setLineWidth(0.3); doc.line(ML, y, RX, y); y += 5;
+
+  /* ---- customer ---- */
+  if(QT.customer.trim() || QT.phone.trim()){
+    var cl = QT.customer.trim() ? (font(10.5, 'bold'), qtWrap(doc, T(QT.customer.trim()), CW - 8)) : [];
+    var bh = 4 + 4 + cl.length * 5 + (QT.phone.trim() ? 4.6 : 0) + 2.5;
+    doc.setFillColor(244, 246, 251); doc.roundedRect(ML, y, CW, bh, 1.5, 1.5, 'F');
+    var cy = y + 5; font(7.5, 'bold', GREY); doc.text('QUOTATION FOR', ML + 4, cy);
+    cl.forEach(function(ln){ cy += 5; font(10.5, 'bold'); doc.text(ln, ML + 4, cy); });
+    if(QT.phone.trim()){ cy += 4.6; font(9, 'normal'); doc.text(T('Phone: ' + QT.phone.trim()), ML + 4, cy); }
+    y += bh + 5;
+  }
+
+  /* ---- items table ---- */
+  var cols = sep
+    ? [{ k: 'n', w: 9, a: 'c', h: '#' }, { k: 'item', w: 82, a: 'l', h: 'Item' }, { k: 'qty', w: 14, a: 'r', h: 'Qty' }, { k: 'rate', w: 30, a: 'r', h: 'Rate (excl. GST)' }, { k: 'gst', w: 17, a: 'r', h: 'GST %' }, { k: 'amt', w: 30, a: 'r', h: 'Amount' }]
+    : [{ k: 'n', w: 10, a: 'c', h: '#' }, { k: 'item', w: 90, a: 'l', h: 'Item' }, { k: 'qty', w: 16, a: 'r', h: 'Qty' }, { k: 'rate', w: 33, a: 'r', h: 'Rate (incl. GST)' }, { k: 'amt', w: 33, a: 'r', h: 'Amount' }];
+  var xx = ML; cols.forEach(function(col){ col.x = xx; xx += col.w; });
+  function cx(col){ return col.a === 'r' ? col.x + col.w - 2 : col.a === 'c' ? col.x + col.w / 2 : col.x + 2; }
+  function head(){
+    doc.setFillColor(NAVY[0], NAVY[1], NAVY[2]); doc.rect(ML, y, CW, 7, 'F');
+    cols.forEach(function(col){ font(8.5, 'bold', [255, 255, 255]); doc.text(T(col.h), cx(col), y + 4.8, { align: col.a === 'r' ? 'right' : col.a === 'c' ? 'center' : 'left' }); });
+    y += 7;
+  }
+  head();
+  var itemCol = cols[1];
+  c.lines.forEach(function(l, i){
+    var p = l.p, parts = [];
+    font(9, 'bold'); qtWrap(doc, T(p.name), itemCol.w - 4).forEach(function(t){ parts.push({ t: t, s: 9, st: 'bold', col: DARK, h: 4.2 }); });
+    if(p.size && p.name.indexOf(p.size) < 0){ font(8, 'normal'); qtWrap(doc, T(p.size), itemCol.w - 4).forEach(function(t){ parts.push({ t: t, s: 8, st: 'normal', col: GREY, h: 3.7 }); }); }
+    if(p.part){ font(7.5, 'normal'); qtWrap(doc, T('Code: ' + p.part), itemCol.w - 4).forEach(function(t){ parts.push({ t: t, s: 7.5, st: 'normal', col: GREY, h: 3.4 }); }); }
+    var rowH = parts.reduce(function(a, q){ return a + q.h; }, 0) + 3.4;
+    if(y + rowH > BOT){ newPage(); head(); }
+    var ty = y + 1.6; parts.forEach(function(q){ ty += q.h; font(q.s, q.st, q.col); doc.text(q.t, itemCol.x + 2, ty - 0.8); });
+    var vals = { n: String(i + 1), qty: String(l.qty), rate: qtMoney(sep ? l.exRate : l.price), gst: l.rate + '%', amt: qtMoney(sep ? l.exAmt : l.gross) };
+    cols.forEach(function(col){ if(col.k === 'item') return; font(9, col.k === 'amt' ? 'bold' : 'normal'); doc.text(T(vals[col.k]), cx(col), y + 4.7, { align: col.a === 'r' ? 'right' : col.a === 'c' ? 'center' : 'left' }); });
+    doc.setDrawColor(226, 229, 238); doc.setLineWidth(0.2); doc.line(ML, y + rowH, RX, y + rowH);
+    y += rowH;
+  });
+  y += 4;
+
+  /* ---- totals ---- */
+  var rows = [];
+  if(sep){
+    rows.push(['Items total (excl. GST)', qtMoney(c.itemsEx)]);
+    if(c.disc > 0){ rows.push(['Discount' + (QT.discType === 'pct' ? ' (' + (qtNum(QT.discValue) > 100 ? 100 : qtNum(QT.discValue)) + '%)' : ''), '- ' + qtMoney(c.discEx), 'red']); rows.push(['Taxable value', qtMoney(c.taxable)]); }
+    c.gstBy.forEach(function(g){ if(g.rate > 0 || c.gstBy.length === 1) rows.push(['GST @ ' + g.rate + '%', qtMoney(g.gst)]); });
+  } else {
+    rows.push(['Items total (incl. GST)', qtMoney(c.sumG)]);
+    if(c.disc > 0) rows.push(['Discount' + (QT.discType === 'pct' ? ' (' + (qtNum(QT.discValue) > 100 ? 100 : qtNum(QT.discValue)) + '%)' : ''), '- ' + qtMoney(c.disc), 'red']);
+  }
+  if(c.delivery > 0) rows.push(['Delivery charges', qtMoney(c.delivery)]);
+  var BX = 112, BW = RX - BX, need = rows.length * 6 + 11;
+  if(y + need > BOT){ newPage(); }
+  rows.forEach(function(r){
+    font(9.5, 'normal', r[2] === 'red' ? [178, 59, 59] : DARK); doc.text(T(r[0]), BX + 2, y + 4.2); doc.text(T(r[1]), RX - 2, y + 4.2, { align: 'right' });
+    doc.setDrawColor(232, 235, 242); doc.setLineWidth(0.2); doc.line(BX, y + 6, RX, y + 6); y += 6;
+  });
+  doc.setFillColor(NAVY[0], NAVY[1], NAVY[2]); doc.rect(BX, y + 1, BW, 9, 'F');
+  font(11, 'bold', [255, 255, 255]); doc.text('Grand Total', BX + 3, y + 7); doc.text(T(qtMoney(c.grand)), RX - 3, y + 7, { align: 'right' });
+  y += 10; font(7.5, 'normal', GREY); doc.text(sep ? 'GST shown separately above' : 'Inclusive of GST', RX - 2, y + 4, { align: 'right' }); y += 8;
+
+  /* ---- notes ---- */
+  if(QT.notes.trim()){
+    font(9, 'bold', NAVY); if(y + 12 > BOT) newPage(); doc.text('Notes / Terms', ML, y + 4); y += 6;
+    font(8.5, 'normal'); qtWrap(doc, T(QT.notes.trim()), CW).forEach(function(ln){ if(y + 4.2 > BOT) newPage(); font(8.5, 'normal'); doc.text(ln, ML, y + 3.4); y += 4.2; });
+  }
+
+  /* ---- footer + page numbers on every page ---- */
+  var n = doc.getNumberOfPages();
+  for(var pg = 1; pg <= n; pg++){
+    doc.setPage(pg); doc.setDrawColor(210, 215, 226); doc.setLineWidth(0.25); doc.line(ML, 284, RX, 284);
+    font(7.5, 'normal', GREY);
+    doc.text(T((sep ? 'GST is charged extra as shown. ' : 'Prices are inclusive of GST. ') + 'Valid till ' + m.valid + '; prices may change after this date.'), ML, 288.5);
+    doc.text('Page ' + pg + ' of ' + n, RX, 288.5, { align: 'right' });
+  }
+  var nameBit = QT.customer.trim() ? '-' + QT.customer.trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) : '';
+  return { doc: doc, no: m.no, name: 'Quotation-' + m.no + nameBit + '.pdf' };
+}
+function qtMakePdf(){
+  var err = qtValidate(); if(err){ showToast(err); return Promise.reject(null); }
+  return ensureJsPdf().then(function(){ try{ return qtBuildPdf(); }catch(e){ console.error('Quote PDF failed', e); throw new Error('Could not create the PDF. Please check the items and try again.'); } });
+}
+function qtCustomerWaPhone(){ var ph = String(QT.phone || '').replace(/\D/g, ''); if(ph.length === 10) ph = '91' + ph; return ph; }
+
 function openQuoteMaker(){
   if(!session){ showToast('Please sign in first'); return; }
-  var pf = qtPrefs(); QT.margin = pf.margin !== undefined ? pf.margin : 15; QT.round = pf.round !== undefined ? pf.round : 1; QT.days = pf.days || 7; QT.showGst = !!pf.showGst; QT.notes = pf.notes || ''; QT.customer = ''; QT.phone = ''; QT.q = '';
+  var pf = qtPrefs();
+  QT.margin = 0; QT.round = pf.round !== undefined ? Number(pf.round) || 0 : 0; QT.days = pf.days || 7; QT.gstMode = pf.gstMode === 'sep' ? 'sep' : 'incl'; QT.notes = pf.notes || ''; QT.watermark = !!pf.watermark;
+  QT.customer = ''; QT.phone = ''; QT.deliveryOn = false; QT.delivery = 0; QT.discOn = false; QT.discType = 'flat'; QT.discValue = 0; QT.no = null;
   var cart = getCart(); QT.items = Object.keys(cart).map(function(id){ return { id: Number(id), qty: cart[id], manual: false, price: 0 }; }).filter(function(it){ return PRODUCTS.some(function(p){ return p.id === it.id; }); });
   qtRecalc();
-  toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>📄 Quote for my customer</h3><div class="sub">Add your margin, share a neat price quote. Your buying price is never shown to the customer.</div></div><button type="button" class="acpay-btn ghost" id="qtX" style="flex:none;padding:6px 12px">✕</button></div>' +
+  ensureJsPdf().catch(function(){});            // fetch the PDF tool now so the buttons respond instantly
+  toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>📄 Quote for my customer</h3><div class="sub">Make a neat PDF quote with your own margin. Your buying price is never shown on it.</div></div><button type="button" class="acpay-btn ghost" id="qtX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<div class="qt-sec"><b style="font-size:13px">Your logo</b> <span class="sub">(one image, kept on this device only)</span>' +
+      '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><div class="qt-logo" id="qtLogoBox"></div><div style="display:flex;flex-direction:column;gap:6px"><button type="button" class="acpay-btn ghost" id="qtLogoPick" style="padding:7px 12px;font-size:13px"></button><button type="button" class="acpay-btn ghost" id="qtLogoDel" style="padding:7px 12px;font-size:13px;color:#b23b3b">Remove logo</button></div><input type="file" id="qtLogoFile" accept="image/*" style="display:none"></div>' +
+      '<label class="qt-chk"><input type="checkbox" id="qtWm"' + (QT.watermark ? ' checked' : '') + '> Show as a light watermark behind the quote</label><div class="sub" id="qtWmHint"></div></div>' +
     '<div class="acpay-row"><div><label class="l">Customer name</label><input id="qtCust" placeholder="e.g. Ramesh Constructions"></div><div><label class="l">Customer phone</label><input id="qtPhone" type="tel" inputmode="tel" placeholder="for WhatsApp"></div></div>' +
-    '<div class="acpay-row"><div><label class="l">My margin %</label><input id="qtMargin" type="number" step="any" min="0" value="' + QT.margin + '"></div><div><label class="l">Round prices up to</label><select id="qtRound"><option value="0">Exact</option><option value="1">₹1</option><option value="5">₹5</option><option value="10">₹10</option></select></div><div><label class="l">Valid for (days)</label><input id="qtDays" type="number" min="1" value="' + QT.days + '"></div></div>' +
-    '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px"><input type="checkbox" id="qtGst" style="width:18px;height:18px"' + (QT.showGst ? ' checked' : '') + '> Show GST separately on the quote (prices are GST-inclusive)</label>' +
+    '<div class="acpay-row"><div><label class="l">My margin %</label><input id="qtMargin" type="number" step="any" min="0" value="0"></div><div><label class="l">Round prices up to</label><select id="qtRound"><option value="0">Exact</option><option value="1">₹1</option><option value="5">₹5</option><option value="10">₹10</option></select></div><div><label class="l">Valid for (days)</label><input id="qtDays" type="number" min="1" value="' + QT.days + '"></div></div>' +
+    '<div class="qt-sec"><b style="font-size:13px">GST on the quote</b>' +
+      '<label class="qt-chk"><input type="radio" name="qtGstMode" value="incl"' + (QT.gstMode === 'incl' ? ' checked' : '') + '> Include GST in the prices <span class="sub">(default)</span></label>' +
+      '<label class="qt-chk"><input type="radio" name="qtGstMode" value="sep"' + (QT.gstMode === 'sep' ? ' checked' : '') + '> Show GST separately</label></div>' +
+    '<div class="qt-sec"><label class="qt-chk" style="margin-top:0"><input type="checkbox" id="qtDelOn"> <b>Add delivery charges</b></label><div id="qtDelBox" style="display:none;margin-top:6px"><label class="l" style="margin-top:0">Delivery charges (₹)</label><input id="qtDel" type="number" step="any" min="0" placeholder="0"><div class="sub">Added to the total as entered (no extra GST).</div></div></div>' +
+    '<div class="qt-sec"><label class="qt-chk" style="margin-top:0"><input type="checkbox" id="qtDiscOn"> <b>Give my customer a discount</b></label><div id="qtDiscBox" style="display:none;margin-top:6px"><div class="acpay-row" style="margin-top:0"><div><label class="l" style="margin-top:0">Discount type</label><select id="qtDiscType"><option value="flat">Amount (₹)</option><option value="pct">Percent (%)</option></select></div><div><label class="l" style="margin-top:0">Discount</label><input id="qtDisc" type="number" step="any" min="0" placeholder="0"></div></div><div class="sub" id="qtDiscHint">Shown on the PDF only when it is more than 0.</div></div></div>' +
     '<label class="l">Add items</label><input id="qtSearch" placeholder="🔍 Search name, size or code…"><div id="qtRes" class="qo-res"></div>' +
     '<div id="qtList" style="margin-top:6px"></div><div id="qtPriv" class="qt-priv"></div>' +
     '<label class="l">Notes / terms (shown on the quote)</label><textarea id="qtNotes" rows="2" placeholder="e.g. Delivery within 3 days. 50% advance.">' + esc(QT.notes) + '</textarea>' +
-    '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="qtPrint">🖨 Print / Save PDF</button><button type="button" class="acpay-btn green" id="qtWa">📲 Send on WhatsApp</button></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="qtCopy">Copy as text</button></div>', true);
+    '<div class="acpay-row"><button type="button" class="acpay-btn" id="qtDl">⬇ Download PDF</button><button type="button" class="acpay-btn green" id="qtWa">📲 Send PDF on WhatsApp</button></div><div id="qtWaNote" class="qt-note" style="display:none"></div>', true);
   $t('qtRound').value = String(QT.round);
   var idx = buildProductIndex();
+  function paintLogo(){
+    var lg = qtLogo(); $t('qtLogoBox').innerHTML = lg ? '<img alt="Your logo" src="' + lg.d + '">' : '<span class="sub">No logo</span>';
+    $t('qtLogoPick').textContent = lg ? '🖼 Replace logo' : '🖼 Upload logo'; $t('qtLogoDel').style.display = lg ? '' : 'none';
+    $t('qtWmHint').textContent = QT.watermark ? (lg ? 'Your logo will appear faintly behind every page.' : 'No logo yet — your business name will be used as the watermark.') : '';
+  }
+  function summary(){
+    var c = qtCalc(), loss = c.lines.length && c.net < c.cost;
+    $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(c.grand) + (c.disc > 0 || c.delivery > 0 ? ' <span class="qt-sub">(items ' + money(c.net) + (c.delivery > 0 ? ' + delivery ' + money(c.delivery) : '') + ')</span>' : '') + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(c.cost) + ' &nbsp;·&nbsp; <b style="color:' + (c.profit < 0 ? '#b23b3b' : '#1e7b46') + '">My profit: ' + money(c.profit) + ' (' + c.pct + '%)</b>' +
+      (loss ? '<div class="qt-sub" style="color:#b23b3b">⚠ You are selling below your cost.</div>' : '') + '<div class="qt-sub">Only you see this box (delivery is not counted as profit).</div>';
+    $t('qtDiscHint').innerHTML = c.capped ? '<span style="color:#b23b3b">Discount is more than the items total — it is capped at ' + (QT.discType === 'pct' ? '100%' : money(c.sumG)) + '.</span>' : 'Shown on the PDF only when it is more than 0.';
+  }
   function paint(){
     qtRecalc();
     $t('qtList').innerHTML = QT.items.length ? QT.items.map(function(it, i){
-      var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return '';
-      return '<div class="qt-item"><div><b>' + esc(p.name) + '</b><div class="qt-sub">' + esc(p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + esc(p.part) + ' · my cost ' + money(qtCost(it)) + '</div></div><div style="text-align:right"><button type="button" class="acpay-btn ghost" data-qtdel="' + i + '" style="padding:3px 9px;font-size:12px">✕</button></div>' +
-        '<div><label class="qt-sub">Qty</label> <input type="number" min="1" data-qtq="' + i + '" value="' + it.qty + '" style="width:70px"></div><div style="text-align:right"><label class="qt-sub">Selling price (each)</label> <input type="number" step="any" min="0" data-qtp="' + i + '" value="' + it.price + '"><div class="qt-sub">Line ' + money(it.price * it.qty) + '</div></div></div>'; }).join('') : '<div class="sub" style="padding:10px 0">No items yet — search above' + (Object.keys(getCart()).length ? '' : ' (or fill your cart first and open this again)') + '.</div>';
-    var t = qtTotals();
-    $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(t.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(t.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(t.profit) + ' (' + t.pct + '%)</b><div class="qt-sub">Only you see this box.</div>';
+      var p = qtProd(it.id); if(!p) return '';
+      var cost = qtCost(it), mg = cost > 0 ? r2((it.price - cost) / cost * 100) : 0;
+      return '<div class="qt-item"><div><b>' + esc(p.name) + '</b><div class="qt-sub">' + esc(p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + esc(p.part) + ' · my cost ' + money(cost) + ' · GST ' + (Number(p.gstPct) || 0) + '%</div></div><div style="text-align:right"><button type="button" class="acpay-btn ghost" data-qtdel="' + i + '" style="padding:3px 9px;font-size:12px" aria-label="Remove item">✕</button></div>' +
+        '<div><label class="qt-sub">Qty</label> <input type="number" min="1" step="1" data-qtq="' + i + '" value="' + it.qty + '" style="width:70px"></div><div style="text-align:right"><label class="qt-sub">Selling price (each, incl. GST)</label> <input type="number" step="any" min="0" data-qtp="' + i + '" value="' + it.price + '"><div class="qt-sub">Line ' + money(it.price * it.qty) + ' · margin ' + mg + '%</div></div></div>'; }).join('') : '<div class="sub" style="padding:10px 0">No items yet — search above' + (Object.keys(getCart()).length ? '' : ' (or fill your cart first and open this again)') + '.</div>';
+    summary();
   }
-  paint();
+  paintLogo(); paint();
   var go = function(id, ev, fn){ $t(id).addEventListener(ev, fn); };
   go('qtX', 'click', paySheetClose);
+  go('qtLogoPick', 'click', function(){ $t('qtLogoFile').click(); });
+  go('qtLogoFile', 'change', function(e){
+    var f = e.target.files && e.target.files[0]; e.target.value = ''; if(!f) return;
+    qtReadLogo(f).then(function(lg){ if(!qtSaveLogo(lg)){ showToast('Not enough browser storage for this logo — try a smaller image'); return; } paintLogo(); showToast('Logo saved on this device'); }).catch(function(er){ showToast((er && er.message) || 'Could not use that image'); });
+  });
+  go('qtLogoDel', 'click', function(){ qtSaveLogo(null); paintLogo(); showToast('Logo removed'); });
+  go('qtWm', 'change', function(e){ QT.watermark = e.target.checked; qtSavePrefs(); paintLogo(); });
   go('qtCust', 'input', function(e){ QT.customer = e.target.value; }); go('qtPhone', 'input', function(e){ QT.phone = e.target.value; });
-  go('qtMargin', 'input', function(e){ QT.margin = Math.max(0, Number(e.target.value) || 0); QT.items.forEach(function(it){ it.manual = false; }); paint(); qtSavePrefs(); });
-  go('qtRound', 'change', function(e){ QT.round = Number(e.target.value); QT.items.forEach(function(it){ it.manual = false; }); paint(); qtSavePrefs(); });
+  go('qtMargin', 'input', function(e){ QT.margin = qtNum(e.target.value); QT.items.forEach(function(it){ it.manual = false; }); paint(); });
+  go('qtRound', 'change', function(e){ QT.round = Number(e.target.value) || 0; QT.items.forEach(function(it){ it.manual = false; }); paint(); qtSavePrefs(); });
   go('qtDays', 'input', function(e){ QT.days = Math.max(1, Math.floor(Number(e.target.value)) || 7); qtSavePrefs(); });
-  go('qtGst', 'change', function(e){ QT.showGst = e.target.checked; qtSavePrefs(); });
+  document.querySelectorAll('input[name="qtGstMode"]').forEach(function(r){ r.addEventListener('change', function(){ if(r.checked){ QT.gstMode = r.value; qtSavePrefs(); } }); });
+  go('qtDelOn', 'change', function(e){ QT.deliveryOn = e.target.checked; $t('qtDelBox').style.display = e.target.checked ? '' : 'none'; summary(); });
+  go('qtDel', 'input', function(e){ QT.delivery = qtNum(e.target.value); summary(); });
+  go('qtDiscOn', 'change', function(e){ QT.discOn = e.target.checked; $t('qtDiscBox').style.display = e.target.checked ? '' : 'none'; summary(); });
+  go('qtDiscType', 'change', function(e){ QT.discType = e.target.value === 'pct' ? 'pct' : 'flat'; summary(); });
+  go('qtDisc', 'input', function(e){ QT.discValue = qtNum(e.target.value); summary(); });
   go('qtNotes', 'input', function(e){ QT.notes = e.target.value; qtSavePrefs(); });
   go('qtSearch', 'input', function(e){
     var q = e.target.value.trim(), res = $t('qtRes'); if(q.length < 2){ res.innerHTML = ''; return; }
     var hits = qoFind(q, idx, 6); res.innerHTML = hits.length ? hits.map(function(h){ return '<button type="button" data-qtadd="' + h.p.id + '">' + esc(qoOptLabel(h.p)) + '</button>'; }).join('') : '<div class="qo-hint">No match.</div>';
   });
   $t('qtRes').addEventListener('click', function(e){ var b = e.target.closest('button'); if(!b) return; var id = Number(b.getAttribute('data-qtadd')); if(!QT.items.some(function(x){ return x.id === id; })) QT.items.push({ id: id, qty: 1, manual: false, price: 0 }); $t('qtSearch').value = ''; $t('qtRes').innerHTML = ''; paint(); });
-  $t('qtList').addEventListener('input', function(e){ var t = e.target, i;
-    if((i = t.getAttribute('data-qtq')) !== null){ QT.items[Number(i)].qty = Math.max(1, Math.floor(Number(t.value)) || 1); qtRecalc(); var tt = qtTotals(); $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(tt.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(tt.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(tt.profit) + ' (' + tt.pct + '%)</b><div class="qt-sub">Only you see this box.</div>'; }
-    else if((i = t.getAttribute('data-qtp')) !== null){ var it = QT.items[Number(i)]; it.price = Math.max(0, Number(t.value) || 0); it.manual = true; var t2 = qtTotals(); $t('qtPriv').innerHTML = '<b>Customer pays:</b> ' + money(t2.sell) + ' &nbsp;·&nbsp; <b>My cost:</b> ' + money(t2.cost) + ' &nbsp;·&nbsp; <b style="color:#1e7b46">My profit: ' + money(t2.profit) + ' (' + t2.pct + '%)</b><div class="qt-sub">Only you see this box.</div>'; } });
+  $t('qtList').addEventListener('input', function(e){
+    var t = e.target, i;
+    if((i = t.getAttribute('data-qtq')) !== null){ QT.items[Number(i)].qty = Math.max(1, Math.floor(Number(t.value)) || 1); qtRecalc(); summary(); }
+    else if((i = t.getAttribute('data-qtp')) !== null){ var it = QT.items[Number(i)]; it.price = qtNum(t.value); it.manual = true; summary(); }
+  });
   $t('qtList').addEventListener('change', function(e){ if(e.target.getAttribute('data-qtq') !== null || e.target.getAttribute('data-qtp') !== null) paint(); });
   $t('qtList').addEventListener('click', function(e){ var b = e.target.closest('[data-qtdel]'); if(!b) return; QT.items.splice(Number(b.getAttribute('data-qtdel')), 1); paint(); });
-  go('qtPrint', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } qtPrint(); });
-  go('qtWa', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } var ph = String(QT.phone || '').replace(/\D/g, ''); if(ph.length === 10) ph = '91' + ph; window.open('https://wa.me/' + ph + '?text=' + encodeURIComponent(qtText()), '_blank'); });
-  go('qtCopy', 'click', function(){ if(!QT.items.length){ showToast('Add at least one item'); return; } try{ navigator.clipboard.writeText(qtText()); showToast('Quote copied'); }catch(e){ prompt('Copy this quote', qtText()); } });
-}
-function qtNumber(){ var k = 'ac_quote_seq_' + session, n = Number(localStorage.getItem(k) || '0') + 1; try{ localStorage.setItem(k, String(n)); }catch(e){} var d = new Date(); return 'Q' + String(d.getFullYear()).slice(-2) + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(n).padStart(3, '0'); }
-function qtMeta(){ var u = getUsers()[session] || {}, d = new Date(), vt = new Date(Date.now() + QT.days * 86400000); var f = function(x){ return x.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }; return { u: u, date: f(d), valid: f(vt), no: QT.no || (QT.no = qtNumber()) }; }
-function qtText(){
-  var m = qtMeta(), t = qtTotals(), L = [];
-  L.push('*Quotation ' + m.no + '*'); L.push((m.u.business || 'Dealer') + (m.u.phone ? ' · ' + m.u.phone : '')); if(QT.customer) L.push('For: ' + QT.customer); L.push('Date: ' + m.date + ' · Valid till: ' + m.valid); L.push('');
-  QT.items.forEach(function(it, i){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return; L.push((i + 1) + '. ' + p.name + (p.size && p.name.indexOf(p.size) < 0 ? ' (' + p.size + ')' : '') + ' — ' + it.qty + ' × ' + money(it.price) + ' = ' + money(it.price * it.qty)); });
-  L.push(''); if(QT.showGst){ L.push('Taxable value: ' + money(t.taxable)); L.push('GST: ' + money(t.gst)); } L.push('*Total: ' + money(t.sell) + '*' + (QT.showGst ? '' : ' (incl. GST)'));
-  if(QT.notes) { L.push(''); L.push(QT.notes); } return L.join('\n');
-}
-function qtPrint(){
-  var m = qtMeta(), t = qtTotals(), u = m.u;
-  var rows = QT.items.map(function(it, i){ var p = PRODUCTS.find(function(x){ return x.id === it.id; }); if(!p) return ''; return '<tr><td>' + (i + 1) + '</td><td><b>' + esc(p.name) + '</b>' + (p.size && p.name.indexOf(p.size) < 0 ? '<br><span style="color:#555">' + esc(p.size) + '</span>' : '') + '<br><span style="color:#777;font-size:11px">' + esc(p.part) + '</span></td><td class="r">' + it.qty + '</td><td class="r">' + money(it.price) + '</td><td class="r">' + money(it.price * it.qty) + '</td></tr>'; }).join('');
-  var el = document.createElement('div'); el.className = 'acq-print';
-  el.innerHTML = '<div class="acq-doc"><div style="display:flex;justify-content:space-between;gap:12px"><div><h1>' + esc(u.business || 'Quotation') + '</h1><div>' + esc(u.address || '') + '</div><div>' + (u.phone ? 'Phone: ' + esc(u.phone) : '') + (u.gst ? ' · GSTIN: ' + esc(u.gst) : '') + '</div></div><div style="text-align:right"><div style="font-size:20px;font-weight:700;color:#17325c">QUOTATION</div><div>No: <b>' + esc(m.no) + '</b></div><div>Date: ' + esc(m.date) + '</div><div>Valid till: ' + esc(m.valid) + '</div></div></div>' +
-    (QT.customer || QT.phone ? '<div style="margin-top:12px;padding:8px 10px;background:#f4f6fb;border-radius:6px"><b>To:</b> ' + esc(QT.customer || '') + (QT.phone ? ' · ' + esc(QT.phone) : '') + '</div>' : '') +
-    '<table><thead><tr><th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-    '<table style="width:300px;margin-left:auto">' + (QT.showGst ? '<tr><td>Taxable value</td><td class="r">' + money(t.taxable) + '</td></tr><tr><td>GST</td><td class="r">' + money(t.gst) + '</td></tr>' : '') + '<tr><td><b>Total' + (QT.showGst ? '' : ' (incl. GST)') + '</b></td><td class="r"><b style="font-size:16px">' + money(t.sell) + '</b></td></tr></table>' +
-    (QT.notes ? '<div style="margin-top:14px"><b>Notes</b><div style="white-space:pre-line">' + esc(QT.notes) + '</div></div>' : '') + '<div style="margin-top:16px;font-size:11px;color:#666">Prices are inclusive of GST unless stated. This quotation is valid till ' + esc(m.valid) + '. Prices may change after this date.</div></div>';
-  document.body.appendChild(el);
-  var cleanup = function(){ if(el.parentNode) el.remove(); window.removeEventListener('afterprint', cleanup); };
-  window.addEventListener('afterprint', cleanup); setTimeout(function(){ window.print(); setTimeout(cleanup, 60000); }, 150);
-  QT.no = null;
+
+  var busy = false;
+  function lock(on){ busy = on; $t('qtDl').disabled = on; $t('qtWa').disabled = on; }
+  go('qtDl', 'click', function(){
+    if(busy) return; lock(true);
+    qtMakePdf().then(function(r){ r.doc.save(r.name); showToast('PDF downloaded'); }).catch(function(er){ if(er && er.message) showToast(er.message); }).then(function(){ lock(false); });
+  });
+  go('qtWa', 'click', function(){
+    if(busy) return; lock(true); var note = $t('qtWaNote'); note.style.display = 'none';
+    function manual(r){
+      r.doc.save(r.name); var ph = qtCustomerWaPhone(), link = 'https://wa.me/' + ph + '?text=' + encodeURIComponent('Hello' + (QT.customer.trim() ? ' ' + QT.customer.trim() : '') + ', please find our quotation ' + r.no + ' (PDF).');
+      note.style.display = ''; note.innerHTML = '✔ The PDF was saved to your device. WhatsApp cannot attach it automatically here — open the chat below and attach <b>' + esc(r.name) + '</b> with the 📎 button.<div style="margin-top:8px"><a class="acpay-btn green" target="_blank" rel="noopener" href="' + esc(link) + '">Open WhatsApp chat</a></div>';
+    }
+    qtMakePdf().then(function(r){
+      var file = null; try{ file = new File([r.doc.output('blob')], r.name, { type: 'application/pdf' }); }catch(e){}
+      if(file && navigator.share && navigator.canShare && navigator.canShare({ files: [file] })){
+        return navigator.share({ files: [file], title: 'Quotation ' + r.no, text: 'Quotation ' + r.no + (QT.customer.trim() ? ' for ' + QT.customer.trim() : '') })
+          .then(function(){ showToast('Pick WhatsApp to send the PDF'); }, function(er){ if(er && er.name === 'AbortError') return; manual(r); });
+      }
+      manual(r);
+    }).catch(function(er){ if(er && er.message) showToast(er.message); }).then(function(){ lock(false); });
+  });
 }
 
 /* ---- dealer tools menu (one header button instead of many) ---- */
@@ -3593,7 +3990,7 @@ function openDealerTools(){
   if(!session){ showToast('Please sign in first'); return; }
   toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🧰 Dealer tools</h3><div class="sub">Faster ordering and selling.</div></div><button type="button" class="acpay-btn ghost" id="dtX" style="flex:none;padding:6px 12px">✕</button></div>' +
     '<div class="pay-choice" style="margin-top:12px"><button type="button" class="acpay-btn ghost" id="dtQuick" style="display:block;width:100%;text-align:left;margin:6px 0">📋 <b>Quick order</b><br><span class="sub">Paste a WhatsApp / notebook list — we fill the cart</span></button>' +
-    '<button type="button" class="acpay-btn ghost" id="dtQuote" style="display:block;width:100%;text-align:left;margin:6px 0">📄 <b>Quote for my customer</b><br><span class="sub">Add your margin, print or WhatsApp a neat quote</span></button>' +
+    '<button type="button" class="acpay-btn ghost" id="dtQuote" style="display:block;width:100%;text-align:left;margin:6px 0">📄 <b>Quote for my customer</b><br><span class="sub">Add your margin, then download or WhatsApp a PDF quote</span></button>' +
     '<button type="button" class="acpay-btn ghost" id="dtBulk" style="display:block;width:100%;text-align:left;margin:6px 0">📤 <b>Bulk order from Excel</b><br><span class="sub">Upload a sheet of item codes and quantities</span></button></div>');
   $t('dtX').onclick = paySheetClose; $t('dtQuick').onclick = openQuickOrder; $t('dtQuote').onclick = openQuoteMaker;
   $t('dtBulk').onclick = function(){ paySheetClose(); var f = document.getElementById('bulkOrderFile'); if(f) f.click(); };
@@ -3603,9 +4000,6 @@ function openDealerTools(){
 function accountBodyHtml(){
   var users = getUsers();
   var u = users[session] || {};
-  var limit = Number(u.creditLimit) || 0;
-  var outstanding = outstandingForDealer(session);
-  var overLimit = limit > 0 && outstanding > limit;
   var addresses = getDealerAddresses(session);
   var recentBroadcasts = BROADCASTS.slice().reverse().slice(0,5);
 
@@ -3631,12 +4025,6 @@ function accountBodyHtml(){
     '</div>';
 
   html += monthlyCardHtml();
-  if(limit > 0){
-    html += '<div class="account-card mb-3">' +
-        '<div class="ac-row"><span class="ac-label">'+t('account.creditLimit')+'</span><span class="ac-val">'+money(limit)+'</span></div>' +
-        '<div class="ac-row"><span class="ac-label">'+t('account.outstanding')+'</span><span class="ac-val"'+(overLimit?' style="color:var(--maroon-600); font-weight:700;"':'')+'>'+money(outstanding)+'</span></div>' +
-      '</div>';
-  }
 
   html += '<div class="account-card mb-3">' +
       '<div class="ac-title" style="font-weight:700; margin-bottom:8px;">'+t('account.addresses')+'</div>' +
@@ -3930,6 +4318,8 @@ document.querySelectorAll('.admin-tabs button[data-atab]').forEach(function(btn)
 
 function renderAdmin(){
   clearDashboardInterval();
+  updatePayBadge();
+  updateResetBadge();
   if(currentAdminTab === 'dashboard') renderAdminDashboard();
   else if(currentAdminTab === 'orders') renderAdminOrders();
   else if(currentAdminTab === 'customers') renderAdminCustomers();
@@ -4393,7 +4783,6 @@ function orderDetailHtml0(o){
       '<button class="btn-admin sm outline" data-discount-toggle="'+esc(o.id)+'">🎁 Bonus discount</button>' +
       '<button class="btn-admin sm outline" data-export="'+esc(o.id)+'">⬇ Export</button>' +
       (o.status !== 'cancelled' ? '<button class="btn-admin sm outline" data-invoice="'+esc(o.id)+'">🧾 Invoice</button>' : '') +
-      '<button class="btn-admin sm outline" data-pay-dealer="'+esc(o.dealerGst)+'">💰 Payment</button>' +
     '</div>' +
     autoStatusRowHtml(o) +
     (canEditItems ? (
@@ -4829,9 +5218,6 @@ function wireAdminOrders(){
   adminMain.querySelectorAll('[data-invoice]').forEach(function(btn){
     btn.addEventListener('click', function(){ openInvoice(btn.getAttribute('data-invoice')); });
   });
-  adminMain.querySelectorAll('[data-pay-dealer]').forEach(function(btn){
-    btn.addEventListener('click', function(){ openDealerEditor(btn.getAttribute('data-pay-dealer')); });
-  });
   var searchInput = document.getElementById('orderSearchInput');
   if(searchInput){
     searchInput.addEventListener('input', function(){
@@ -5028,7 +5414,8 @@ function renderAdminCustomers(){
   var users = getUsers();
   var allGsts = Object.keys(users);
   var blockedCount = allGsts.filter(function(g){ return users[g].isActive === false; }).length;
-  var toolbar = '<div class="admin-toolbar"><h2>Dealer Profiles <span class="ac-sub" style="font-weight:400;">· '+allGsts.length+' dealers'+(blockedCount?' · '+blockedCount+' blocked':'')+'</span></h2></div>' +
+  var toolbar = '<div class="admin-toolbar"><h2>Dealer Profiles <span class="ac-sub" style="font-weight:400;">· '+allGsts.length+' dealers'+(blockedCount?' · '+blockedCount+' blocked':'')+'</span></h2>' +
+      '<div><button class="btn-admin outline" id="btnResetReqs">🔑 Password requests<span id="resetReqCount">'+(RESET_PENDING ? ' ('+RESET_PENDING+')' : '')+'</span></button></div></div>' +
     '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center;">' +
       '<input type="text" id="dealerSearchInput" placeholder="🔍 Search by business name, GST or phone…" value="'+esc(DEALER_SEARCH||'')+'" style="flex:1; min-width:200px; border:1.3px solid #ddd3ba; border-radius:8px; padding:9px 12px; font-size:13px;">' +
       [['all','All ('+allGsts.length+')'],['active','Active ('+(allGsts.length-blockedCount)+')'],['blocked','Blocked ('+blockedCount+')']].map(function(f){
@@ -5054,13 +5441,10 @@ function renderAdminCustomers(){
     tableHtml = '<div class="admin-empty"><div class="ae-big">No dealers match</div></div>';
   } else {
     tableHtml = '<div style="overflow-x:auto;"><table class="dealer-table"><thead><tr>' +
-      '<th>Business</th><th>GST</th><th>Contact</th><th>Phone</th><th>Tier</th><th>Standing %</th><th>Outstanding</th><th>Can order</th><th></th>' +
+      '<th>Business</th><th>GST</th><th>Contact</th><th>Phone</th><th>Tier</th><th>Standing %</th><th>Can order</th><th></th>' +
       '</tr></thead><tbody>' +
       pageGsts.map(function(gst){
         var u = users[gst];
-        var outstanding = outstandingForDealer(gst);
-        var limit = Number(u.creditLimit) || 0;
-        var over = limit > 0 && outstanding > limit;
         var blocked = u.isActive === false;
         return '<tr'+(blocked?' style="background:#fdf1f1;"':'')+'>' +
           '<td>'+esc(u.business||'—')+(u.accountKey ? ' <span style="font-size:9px; color:var(--ink-600);">(linked)</span>' : '')+(blocked?' <span class="low-stock-pill" style="background:#fbdede; color:#a12626; font-size:10px;">Blocked</span>':'')+'</td>' +
@@ -5069,7 +5453,6 @@ function renderAdminCustomers(){
           '<td>'+esc(u.phone||'—')+'</td>' +
           '<td><span class="tier-badge">'+esc(u.tier||'Standard')+'</span></td>' +
           '<td>'+(Number(u.standingDiscountPct)||0)+'%</td>' +
-          '<td'+(over ? ' style="color:var(--maroon-600); font-weight:700;"' : '')+'>'+money(outstanding)+(limit>0?' / '+money(limit):'')+'</td>' +
           '<td><label class="switch" title="'+(blocked?'Blocked — tap to activate':'Active — tap to block')+'"><input type="checkbox" data-toggle-active="'+esc(gst)+'"'+(blocked?'':' checked')+'><span class="slider"></span></label></td>' +
           '<td><button class="btn-admin sm outline" data-edit-dealer="'+esc(gst)+'">Edit</button></td>' +
         '</tr>';
@@ -5080,6 +5463,8 @@ function renderAdminCustomers(){
         '<span>Page '+DEALER_PAGE+' / '+pages+'</span><button class="btn-admin sm outline" id="dNext"'+(DEALER_PAGE>=pages?' disabled':'')+'>Next ›</button></span></div>';
   }
   adminMain.innerHTML = toolbar + tableHtml;
+  var rrBtn = document.getElementById('btnResetReqs'); if(rrBtn) rrBtn.addEventListener('click', openResetRequests);
+  updateResetBadge();
   var dealerSearch = document.getElementById('dealerSearchInput');
   if(dealerSearch){
     dealerSearch.addEventListener('input', function(){
@@ -5115,10 +5500,6 @@ function openDealerEditor(gst){
   var body = document.getElementById('dealerOffcanvasBody');
   var overrides = u.priceOverrides || {};
   var overrideIds = Object.keys(overrides);
-  var outstanding = outstandingForDealer(gst);
-  var limit = Number(u.creditLimit) || 0;
-  var over = limit > 0 && outstanding > limit;
-  var dealerOrders = getAllOrders().filter(function(o){ return o.dealerGst === gst; });
   var acctPhone = u.accountKey || normalizePhone(u.phone);
   var linkedAcc = acctPhone ? getAccounts()[acctPhone] : null;
   var linkedGsts = linkedAcc ? linkedAcc.gsts : [gst];
@@ -5144,7 +5525,6 @@ function openDealerEditor(gst){
       '<div class="full"><label>Registered Address</label><textarea id="edAddress" rows="2">'+esc(u.address||'')+'</textarea></div>' +
       '<div class="full"><label>Delivery Address</label><textarea id="edDelivery" rows="2">'+esc(u.deliveryAddress||u.address||'')+'</textarea></div>' +
       '<div><label>Standing Extra Discount %</label><input type="number" id="edStanding" value="'+(Number(u.standingDiscountPct)||0)+'" min="0" max="100" step="0.5"></div>' +
-      '<div><label>Credit Limit (₹, 0 = not tracked)</label><input type="number" id="edCreditLimit" value="'+(Number(u.creditLimit)||0)+'" min="0" step="100"></div>' +
       '<div class="full"><label>Notes</label><textarea id="edNotes" rows="2">'+esc(u.notes||'')+'</textarea></div>' +
     '</div>' +
     '<button class="btn-admin mt-3" id="saveDealerBtn" style="width:100%;">Save profile</button>' +
@@ -5164,29 +5544,6 @@ function openDealerEditor(gst){
         'To give this dealer a special rate on a product, open that product\'s <b>Details → Dealer Pricing</b>. ' +
         'Rates are assigned there (for one or many dealers at once); this list shows what is currently set and lets you remove a rate.</div>' +
       '<button class="btn-admin sm mt-2" id="goProductPricingBtn">Go to Products &amp; Pricing →</button>' +
-    '</div>' +
-
-    '<div class="admin-card mt-3">' +
-      '<div class="ac-title" style="margin-bottom:8px;">Credit &amp; Payments</div>' +
-      '<div class="oi-line"><span>Credit limit</span><span>'+(limit>0?money(limit):'Not set')+'</span></div>' +
-      '<div class="oi-line" style="font-weight:700;'+(over?' color:var(--maroon-600);':'')+'"><span>Outstanding balance</span><span>'+money(outstanding)+'</span></div>' +
-      (over ? '<div class="discount-applied-tag" style="background:#fbdede; color:#a12626;">⚠ Over credit limit</div>' : '') +
-      '<div class="df-row mt-2" style="display:flex; gap:6px; flex-wrap:wrap;">' +
-        '<select id="payOrder" style="flex:1; min-width:140px; border:1.3px solid #ddd3ba; border-radius:6px; padding:6px 9px; font-size:12px;">' +
-          '<option value="">General payment (no specific order)</option>' +
-          dealerOrders.map(function(o){ return '<option value="'+esc(o.id)+'">#'+esc(o.id)+' — '+money(orderPayable(o))+'</option>'; }).join('') +
-        '</select>' +
-        '<input type="number" id="payAmount" placeholder="Amount ₹" style="width:110px; border:1.3px solid #ddd3ba; border-radius:6px; padding:6px 9px; font-size:12px;">' +
-        '<input type="text" id="payNote" placeholder="Note (optional)" style="flex:1; min-width:120px; border:1.3px solid #ddd3ba; border-radius:6px; padding:6px 9px; font-size:12px;">' +
-      '</div>' +
-      '<button class="btn-admin sm mt-2" id="recordPaymentBtn">💰 Record payment</button>' +
-      '<div class="admin-order-items mt-2">' +
-        (paymentsForDealer(gst).length === 0 ? '<div class="ac-sub">No payments recorded yet.</div>' :
-          paymentsForDealer(gst).slice().reverse().map(function(p){
-            return '<div class="oi-line"><span>'+esc(p.date)+(p.orderId?' · #'+esc(p.orderId):'')+(p.note?' · '+esc(p.note):'')+'</span><span>'+money(p.amount)+'</span></div>';
-          }).join('')
-        ) +
-      '</div>' +
     '</div>' +
 
     '<div class="admin-card mt-3">' +
@@ -5216,7 +5573,6 @@ function openDealerEditor(gst){
       address: document.getElementById('edAddress').value.trim(),
       deliveryAddress: document.getElementById('edDelivery').value.trim(),
       standingDiscountPct: Number(document.getElementById('edStanding').value) || 0,
-      creditLimit: Number(document.getElementById('edCreditLimit').value) || 0,
       notes: document.getElementById('edNotes').value.trim(),
       isActive: document.getElementById('edActive').checked,
       blockReason: document.getElementById('edActive').checked ? '' : document.getElementById('edBlockReason').value.trim()
@@ -5226,10 +5582,9 @@ function openDealerEditor(gst){
       logAudit(patch.isActive ? 'Dealer activated' : 'Dealer blocked', (u.business||gst)+' ('+gst+')'+(patch.blockReason ? ' — '+patch.blockReason : ''));
     }
     var standingBefore = Number(u.standingDiscountPct)||0;
-    var creditBefore = Number(u.creditLimit)||0;
     updateDealerProfile(gst, patch);
-    if(standingBefore !== patch.standingDiscountPct || creditBefore !== patch.creditLimit){
-      logAudit('Dealer profile updated', (u.business||gst)+': standing % '+standingBefore+'→'+patch.standingDiscountPct+', credit limit '+standingBefore+'→'+patch.creditLimit);
+    if(standingBefore !== patch.standingDiscountPct){
+      logAudit('Dealer profile updated', (u.business||gst)+': standing % '+standingBefore+'→'+patch.standingDiscountPct);
     }
     showToast('Dealer profile saved');
     dealerOffcanvas.hide();
@@ -5248,16 +5603,6 @@ function openDealerEditor(gst){
   document.getElementById('goProductPricingBtn').addEventListener('click', function(){
     try{ dealerOffcanvas.hide(); }catch(e){}
     goAdminTab('products');
-  });
-  document.getElementById('recordPaymentBtn').addEventListener('click', function(){
-    var orderId = document.getElementById('payOrder').value;
-    var amount = Number(document.getElementById('payAmount').value);
-    var note = document.getElementById('payNote').value.trim();
-    if(!amount || amount <= 0){ showToast('Enter a valid payment amount'); return; }
-    recordPayment(gst, amount, orderId, note);
-    showToast('Payment recorded');
-    openDealerEditor(gst);
-    if(currentAdminTab === 'customers') renderAdminCustomers();
   });
   document.getElementById('linkBusinessBtn').addEventListener('click', function(){
     var newBusiness = window.prompt('New business name:');
@@ -7975,8 +8320,6 @@ function dealerExportFields(gst){
     'Delivery Address': u.deliveryAddress || u.address || '',
     'Dealer Tier': u.tier || 'Standard',
     'Standing Extra Discount %': Number(u.standingDiscountPct)||0,
-    'Credit Limit (₹)': Number(u.creditLimit)||0,
-    'Outstanding Balance (₹)': outstandingForDealer(gst),
     'Notes': u.notes || ''
   };
 }
@@ -8118,7 +8461,6 @@ function exportFullBackup(){
     products: PRODUCTS,
     orders: getAllOrders(),
     dealers: getUsers(),
-    payments: PAYMENTS,
     banners: BANNERS,
     offers: OFFERS,
     broadcasts: BROADCASTS,
@@ -8261,7 +8603,7 @@ window.__acRefresh = function(){
   PRODUCTS = loadProducts(); CATALOG_CATEGORIES = loadCatalogCategories(); CATALOG_SUBCATEGORIES = loadCatalogSubcategories();
   SPEC_GROUPS = loadSpecGroups(); syncSpecVariantProducts();
   CALC_RULES = loadCalcRules(); BANNERS = loadBanners(); OFFERS = loadOffers(); SETTINGS = loadSettings();
-  PAY_CACHE = null; PAYMENTS = loadPayments(); BROADCASTS = loadBroadcasts(); STOCK_NOTIFY = loadStockNotify();
+  BROADCASTS = loadBroadcasts(); STOCK_NOTIFY = loadStockNotify();
   if(adminSession){ renderAdmin(); }
   else if(session && !document.getElementById('appShell').classList.contains('d-none')){ render(); }
 };
@@ -8270,7 +8612,7 @@ window.__acSeed = function(){
   saveCatalogCategories(CATALOG_CATEGORIES); saveCatalogSubcategories(CATALOG_SUBCATEGORIES);
   saveSpecGroups(SPEC_GROUPS); saveProducts(PRODUCTS);
   saveSettings(SETTINGS); saveOffers(OFFERS); saveBanners(BANNERS); saveCalcRules(CALC_RULES);
-  saveBroadcasts(BROADCASTS); savePayments(PAYMENTS);
+  saveBroadcasts(BROADCASTS);
 };
 
 registerServiceWorkerAndManifest();

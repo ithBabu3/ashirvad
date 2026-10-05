@@ -42,9 +42,10 @@ service cloud.firestore {
     function canWrite()  { return isAdmin() && staffRole() != 'viewer'; }
     function isDealer()  { return signedIn() && request.auth.token.email != null
                                   && request.auth.token.email.matches('.*@dealer[.]ashirvadconnect[.]app'); }
-    function myPhone()   { return request.auth.token.email.split('@')[0]; }
+    // the login e-mail is <phone>@… or, after an admin-approved password reset, <phone>.r<N>@… — the phone is always the part before the first dot
+    function myPhone()   { return request.auth.token.email.split('@')[0].split('[.]')[0]; }
     function mine(data)  { return isDealer() && data.accountKey == myPhone(); }
-    // payment claims: a dealer may only ever write a 'pending' claim; confirmations live in the admin-only ledger and payHistory
+    // payment claims: a dealer may only ever write a 'pending' claim; paymentStatus / paidAmount / payHistory are admin-only
     function payClaimOk() { return !changes(['payClaim']) || request.resource.data.payClaim.status == 'pending'; }
     function payCreateOk(d) { return !('payClaim' in d) || d.payClaim.status == 'pending'; }
     function changes(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasAny(keys); }
@@ -69,6 +70,23 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow create, update, delete: if key.matches('staff_.*') ? isOwner() : canWrite();
+      // dealer_<phone>: after an approved reset the dealer, now signed in with the new login, closes the reset window
+      allow update: if isDealer() && key == ('dealer_' + myPhone()) && resource.data.get('resetOpen', false) == true
+                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resetOpen'])
+                      && request.resource.data.resetOpen == false;
+    }
+    // forgot-password requests: anyone (not signed in) may file ONE request per phone; only the admin reads / decides.
+    // A new request is accepted only when the previous one was rejected, or approved and already used (reset window closed).
+    match /reset_requests/{phone} {
+      function reqShape() { return request.resource.data.keys().hasOnly(['phone','gst','address','status','at'])
+                              && request.resource.data.phone == phone && request.resource.data.status == 'pending'
+                              && phone.matches('[0-9]{10}') && request.resource.data.gst is string && request.resource.data.address is string
+                              && request.resource.data.gst.size() < 40 && request.resource.data.address.size() < 400; }
+      allow read: if isAdmin();
+      allow create: if canWrite() || reqShape();
+      allow update: if canWrite() || (reqShape() && (resource.data.status == 'rejected'
+                        || (resource.data.status == 'approved' && get(/databases/$(database)/documents/login_index/$('dealer_' + phone)).data.get('resetOpen', false) == false)));
+      allow delete: if canWrite();
     }
     // availability per product = sum of the distributors' stock; dealers read it, every distributor only writes his own key
     match /stock_totals/{pid} {
@@ -114,7 +132,7 @@ service cloud.firestore {
                         && request.resource.data.get('standingDiscountPct', 0) == 0);
       allow update: if canWrite() || (mine(resource.data)
                         && request.resource.data.accountKey == resource.data.accountKey
-                        && !changes(['tier','standingDiscountPct','priceOverrides','creditLimit','isActive',
+                        && !changes(['tier','standingDiscountPct','priceOverrides','isActive',
                                      'blockReason','notes','autoStatusRule','gst']));
       allow delete: if canWrite();
     }
@@ -133,19 +151,14 @@ service cloud.firestore {
       allow create: if canWrite() || (mine(request.resource.data)
                         && exists(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst))
                         && get(/databases/$(database)/documents/dealers/$(request.resource.data.dealerGst)).data.accountKey == myPhone()
-                        && payCreateOk(request.resource.data) && !('payHistory' in request.resource.data));
+                        && payCreateOk(request.resource.data) && !('payHistory' in request.resource.data)
+                        && !('paymentStatus' in request.resource.data) && !('paidAmount' in request.resource.data));
       // a dealer can cancel / mark seen / trigger an invoice number — but never change what was ordered or the price
       allow update: if canWrite() || (mine(resource.data)
                         && request.resource.data.accountKey == resource.data.accountKey
-                        && !changes(['items','total','deliveryCharge','dealerGst','id','discount','createdAt','payHistory']) && payClaimOk()
+                        && !changes(['items','total','deliveryCharge','dealerGst','id','discount','createdAt','payHistory','paymentStatus','paidAmount']) && payClaimOk()
                         && !(changes(['invoiceNo']) && 'invoiceNo' in resource.data));
       allow delete: if canWrite();
-    }
-
-    // ---- payments / credit ledger: dealers may read their own, only admin writes ----
-    match /payments/{id} {
-      allow read: if isAdmin() || mine(resource.data);
-      allow write: if canWrite();
     }
 
     // ---- "notify me when back in stock" requests ----

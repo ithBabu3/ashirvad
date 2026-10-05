@@ -125,3 +125,12 @@ built-in admin password in `js/app.js` applies — testing only.
   also appears when only a QR image or bank details are set.
 - **Audit log removed**: nothing is written to it any more (saves Firestore writes and the admin's startup reads). Old entries can be deleted in Data Manager → "Old audit log".
 - Deploy: `firebase deploy --only firestore,hosting`.
+
+## v2.5.0
+- **Admin → Orders**: red number on the *Orders* tab = orders received and still waiting (status *Placed*); it updates every few seconds and a toast appears when a new one arrives.
+- **Admin → Orders → Details → 💳 Payment**: admin can now set the payment status (Unpaid / Part paid / Paid, with the amount for Part paid). Dealers only see it.
+- **Removed**: the *Credit & Payments* section, credit limit, outstanding balance, payment ledger (`payments` collection) and the credit meter in the cart.
+- **Forgot password** (dealer login screen): phone + GST + address → admin sees *Dealers → 🔑 Password requests*, approves only when the details match → dealer sets a new password on the same screen.
+- **Duplicate registration** is refused when the same phone number already has a business with the same address (GST duplicates were already refused).
+- **Quote maker** rewritten: PDF only (bundled jsPDF in `js/vendor/`, no uploads), default margin 0%, one logo kept on the device (landscape or portrait fits automatically) with optional watermark, GST included (default) or shown separately, optional delivery charge, optional discount (₹ or %), WhatsApp sends the PDF (share sheet on phones; otherwise it is saved and the chat opens).
+- **Deploy:** `firebase deploy --only firestore:rules,hosting` (new rules for `reset_requests`, payment fields).

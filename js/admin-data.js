@@ -23,10 +23,9 @@ var GROUPS = [
     M('calc_rules', '📐', 'Calculator rules', 'Quantity / price calculator rules.', ['name', 'title']),
     M('broadcasts', '📣', 'Broadcast messages', 'Announcements sent to dealers.', ['title', 'message'])]],
   ['🧾 Business', [
-    M('dealers', '🏢', 'Dealers', 'Dealer / customer profiles (GST, tier, discount, credit).', ['business', 'gst', 'phone', 'tier', 'isActive']),
+    M('dealers', '🏢', 'Dealers', 'Dealer / customer profiles (GST, tier, discount).', ['business', 'gst', 'phone', 'tier', 'isActive']),
     M('accounts', '👤', 'Dealer logins', 'Links a dealer\'s phone number to his GST profiles.', ['gsts']),
     M('orders', '🧾', 'Orders', 'Every order placed by dealers.', ['id', 'dealerGst', 'status', 'total', 'date']),
-    M('payments', '💳', 'Payments', 'Credit ledger — payments received.', ['dealerGst', 'amount', 'date', 'note']),
     M('stock_notify', '🔔', '"Notify me" requests', 'Dealers waiting for an item to come back in stock.', ['gst', 'productId', 'time'])]],
   ['🚚 Distributors', [
     M('distributors', '🚚', 'Distributors', 'Each distributor and his settings.', ['name', 'city', 'phone', 'stockView', 'isActive']),
@@ -357,8 +356,8 @@ function restoreFlow(){ importFlow(null); }
 
 /* ================================================================== delete data / factory reset */
 var RG = [
-  { id: 'orders', label: '🧾 Orders & payments', desc: 'All dealer orders, payments / credit ledger, “notify me” requests, invoice counter back to 1.', colls: ['orders', 'payments', 'stock_notify'], extra: ['invoice'] },
-  { id: 'dealers', label: '🏢 Dealers', desc: 'Dealer profiles and their login links. (Their sign-in accounts remain in Firebase Authentication.)', colls: ['dealers', 'accounts'] },
+  { id: 'orders', label: '🧾 Orders', desc: 'All dealer orders, “notify me” requests, invoice counter back to 1.', colls: ['orders', 'stock_notify'], extra: ['invoice'] },
+  { id: 'dealers', label: '🏢 Dealers', desc: 'Dealer profiles and their login links. (Their sign-in accounts remain in Firebase Authentication.)', colls: ['dealers', 'accounts', 'reset_requests'] },
   { id: 'catalogue', label: '📦 Catalogue', desc: 'Products, catalog cards, categories, offers, banners, calculator rules, broadcasts.', colls: ['products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_totals'] },
   { id: 'distributors', label: '🚚 Distributors', desc: 'Distributors, their stock, sales, orders, history, requests, logins and roles.', colls: ['distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'dist_logins', 'roles'], extra: ['login_index_dist'] },
   { id: 'audit', label: '📜 Old audit log entries', desc: 'Leftover entries from before the audit log was removed.', colls: ['audit_log'] },
