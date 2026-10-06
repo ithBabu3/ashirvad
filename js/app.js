@@ -36,7 +36,7 @@ var STRINGS = {
     "nav.home":"Home",
     "nav.categories":"Categories",
     "nav.cart":"Cart",
-    "nav.calculator":"Bore Calculator",
+    "nav.calculator":"Calculator",
     "nav.calculatorShort":"Calc",
     "nav.orders":"Orders",
     "nav.account":"Account",
@@ -148,7 +148,7 @@ var STRINGS = {
     "cart.freeDeliveryUnlocked":"🎉 You've unlocked free delivery!",
     "cart.addMoreForFree":"Add {n} more for free delivery",
     "cart.deliveryCharge":"Delivery charge",
-    "calc.title":"Bore / Casing Requirement Calculator",
+    "calc.title":"Calculator",
     "calc.intro":"Tell us your bore depth and purpose — we'll work out the pipes and fittings you need.",
     "calc.purposeType":"Application / Purpose",
     "calc.selectPurpose":"Select purpose…",
@@ -1445,7 +1445,7 @@ loginForm.addEventListener('submit', function(e){
     CLOUD.dealerLogin(phone, pw).then(function(res){
       function go(g){ localStorage.setItem('ac_session', g); CLOUD.reload(); }
       if(res.gsts.length === 1) go(res.gsts[0]); else showBusinessSwitcher(res.gsts, go);
-    }).catch(function(err){ errEl.textContent = CLOUD.authMessage(err, t); }).then(function(){ if(lbtn) lbtn.disabled = false; });
+    }).catch(function(err){ errEl.textContent = CLOUD.authMessage(err, t) + (/invalid-credential|wrong-password|invalid-login/.test((err && err.code) || '') ? ' (If you just reset your password, use the NEW one.)' : ''); }).then(function(){ if(lbtn) lbtn.disabled = false; });
     return;
   }
   var acc = findAccountForPhone(phone);
@@ -1482,25 +1482,29 @@ registerForm.addEventListener('submit', function(e){
   if(CLOUD){
     if(pw.length < 6){ errEl.textContent = 'Password must be at least 6 characters.'; return; }
     var rbtn = registerForm.querySelector('button[type="submit"]'); if(rbtn) rbtn.disabled = true;
-    CLOUD.dealerRegister({ business:business, gst:gst, phone:phone, address:address, password:pw }).then(function(){
+    CLOUD.dealerRegister({ business:business, gst:gst, phone:phone, address:address, password:pw }).then(function(info){
+      try{ sessionStorage.setItem('ac_notice', info && info.existing
+        ? (info.sameAddress ? 'Added as another business of the same dealer — your account already existed. Use your OLD password to log in.' : 'Business added to your existing account. Use your existing password to log in.')
+        : 'Registered ✔'); }catch(e){}
       localStorage.setItem('ac_session', gst); CLOUD.reload();
     }).catch(function(err){
       errEl.textContent = err && err.code === 'ac/gst-exists' ? t('auth.err.gstExists')
-        : err && err.code === 'ac/duplicate' ? DUP_MSG
-        : err && err.code === 'ac/phone-wrong-password' ? 'This phone number is already registered. Use the correct password, or log in and add a new business from your account.'
+        : err && err.code === 'ac/phone-wrong-password' ? 'This phone number already has an account. If it is yours (same dealer, another business), enter your OLD password to add this business — or use “Forgot password?”.'
         : CLOUD.authMessage(err, t);
     }).then(function(){ if(rbtn) rbtn.disabled = false; });
     return;
   }
   var users = getUsers();
-  if(users[gst]){ errEl.textContent = t('auth.err.gstExists'); return; }
+  if(users[gst]){ errEl.textContent = t('auth.err.gstExists'); return; }     // only a GST number that already exists is refused
   var ph10 = normalizePhone(phone);
-  if(Object.keys(users).some(function(g){ var x = users[g]; return (normalizePhone(x.phone) === ph10 || x.accountKey === ph10) && (sameAddr(x.address, address) || sameAddr(x.deliveryAddress, address)); })){ errEl.textContent = DUP_MSG; return; }
+  var mine = Object.keys(users).filter(function(g){ var x = users[g]; return normalizePhone(x.phone) === ph10 || x.accountKey === ph10; });
+  var sameAddress = mine.some(function(g){ return sameAddr(users[g].address, address) || sameAddr(users[g].deliveryAddress, address); });
   var existingAcc = findAccountForPhone(phone);
-  if(existingAcc && existingAcc.password !== pw){
-    errEl.textContent = 'This phone number is already registered. Log in and add a new business from your account, or use the correct password.';
+  if(existingAcc && existingAcc.password !== pw && !sameAddress){
+    errEl.textContent = 'This phone number already has an account. Enter your existing password to add this business, or log in and add it from your account.';
     return;
   }
+  if(existingAcc) pw = existingAcc.password;          // same dealer: his existing password stays; whatever he typed is ignored
   users[gst] = {
     business:business, gst:gst, phone:phone, address:address, password:pw,
     contactPerson:'', email:'', deliveryAddress:address, tier:'Standard',
@@ -1511,7 +1515,7 @@ registerForm.addEventListener('submit', function(e){
   session = gst;
   localStorage.setItem('ac_session', gst);
   enterApp();
-  showToast(t('toast.registered'));
+  showToast(existingAcc ? (sameAddress ? 'Added as another business of the same dealer. Use your OLD password to log in.' : 'Business added to your existing account.') : t('toast.registered'));
 });
 
 /* ================= Forgot password (admin approves) + duplicate-registration guard =================
@@ -1521,18 +1525,26 @@ registerForm.addEventListener('submit', function(e){
 var DUP_MSG = 'This business is already registered (same phone number and address). Please log in — or use “Forgot password?” if you cannot remember the password.';
 function normAddr(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function sameAddr(a, b){ var x = normAddr(a), y = normAddr(b); return !!x && x === y; }
-/* does a reset request carry exactly the details of a registered dealer? */
-function resetMatch(req){
-  var u = getUsers()[String(req.gst || '').trim().toUpperCase()]; if(!u) return false;
+/* Which detail is wrong? returns '' when phone + GST + address all match a registered dealer (case, spaces and punctuation never matter) */
+function resetCheck(req){
+  var u = getUsers()[String(req.gst || '').trim().toUpperCase()]; if(!u) return 'ac/bad-gst';
   var ph = normalizePhone(req.phone);
-  if(normalizePhone(u.phone) !== ph && String(u.accountKey || '') !== ph) return false;
-  return sameAddr(u.address, req.address) || sameAddr(u.deliveryAddress, req.address) || (u.addresses || []).some(function(a){ return sameAddr(a.text, req.address); });
+  if(normalizePhone(u.phone) !== ph && String(u.accountKey || '') !== ph) return 'ac/bad-phone';
+  var ok = sameAddr(u.address, req.address) || sameAddr(u.deliveryAddress, req.address) || (u.addresses || []).some(function(a){ return sameAddr(a.text, req.address); });
+  return ok ? '' : 'ac/bad-address';
 }
+function resetMatch(req){ return resetCheck(req) === ''; }
+var RESET_MSG = {
+  'ac/bad-gst': 'GST number not found. Check the GST number you typed.',
+  'ac/bad-phone': 'Phone number does not match this GST number.',
+  'ac/bad-address': 'Address does not match the registered address for this GST number.',
+  'ac/no-match': 'We could not confirm these details on the server. If the GST number, phone and address are right, ask the shop to publish the latest database rules.'
+};
 var RESET = {
   /* verifies phone + GST + address against the saved profile and sets the new password (no admin needed) */
   run: function(req){
     if(CLOUD) return CLOUD.resetPassword(req);
-    if(!resetMatch(req)){ var e = new Error('nomatch'); e.code = 'ac/no-match'; return Promise.reject(e); }
+    var bad = resetCheck(req); if(bad){ var e = new Error(bad); e.code = bad; return Promise.reject(e); }
     var ph = normalizePhone(req.phone), accs = getAccounts();
     if(accs[ph]){ accs[ph].password = req.password; saveAccounts(accs); }
     var users = getUsers(); Object.keys(users).forEach(function(g){ if(normalizePhone(users[g].phone) === ph || users[g].accountKey === ph) users[g].password = req.password; }); saveUsers(users);
@@ -1560,10 +1572,12 @@ function openForgotPassword(){
     if(req.password !== $f('fpPw2').value){ err.textContent = t('auth.err.passwordMismatch'); return; }
     btn.disabled = true; btn.textContent = 'Checking…';
     RESET.run(req).then(function(){
-      paySheetClose(); showToast('Password changed — please log in');
-      var lp = document.getElementById('loginPhone'); if(lp){ lp.value = req.phone; var lw = document.getElementById('loginPassword'); if(lw){ lw.value = ''; lw.focus(); } }
+      // a clear confirmation inside the sheet (a toast alone was easy to miss)
+      w.querySelector('.acpay-sheet').innerHTML = '<div style="text-align:center;padding:10px 4px"><div style="font-size:42px">✅</div><h3 style="margin:6px 0">Password changed</h3><div class="sub" style="margin-bottom:14px">Your OLD password no longer works. Log in with the NEW password you just set.</div><button type="button" class="acpay-btn green" id="fpDone">Go to login</button></div>';
+      var dn = w.querySelector('#fpDone'); if(dn) dn.onclick = function(){ paySheetClose(); var lp = document.getElementById('loginPhone'); if(lp){ lp.value = req.phone; var lw = document.getElementById('loginPassword'); if(lw){ lw.value = ''; lw.focus(); } } };
     }).catch(function(e){
-      err.textContent = e && e.code === 'ac/no-match' ? 'These details do not match our records. Check the phone number, GST number and address exactly as you registered.' : ((e && e.message) || 'Could not reset the password. Please try again.');
+      var c = e && e.code;
+      err.textContent = RESET_MSG[c] || (c === 'auth/network-request-failed' ? 'Network problem — check your internet and try again.' : ((e && e.message) || 'Could not reset the password. Please try again.'));
       btn.disabled = false; btn.textContent = 'Reset password';
     });
   };
@@ -2645,7 +2659,7 @@ function orderTimelineHtml(o){
     return '<div class="oc-timeline">' +
       '<div class="oc-tl-step done"><div class="dot"></div><div class="lbl">'+t('orders.status.placed')+'</div><div class="when">'+esc(whenFor('placed'))+'</div></div>' +
       '<div class="oc-tl-step cancelled"><div class="dot"></div><div class="lbl">'+t('orders.status.cancelled')+'</div><div class="when">'+esc(whenFor('cancelled'))+'</div></div>' +
-    '</div>';
+    '</div>' + cancelNoteHtml(o);
   }
   var reachedIdx = STATUS_ORDER.indexOf(o.status);
   return '<div class="oc-timeline">' + STATUS_ORDER.map(function(st, i){
@@ -2787,6 +2801,7 @@ function renderOrdersView(){
       var o = findOrder(id);
       if(!o || o.status !== 'placed') return;
       if(!confirm(t('orders.cancel') + '?')) return;
+      o.cancelledBy = 'dealer'; o.cancelledAt = Date.now();
       applyOrderStatus(o, 'cancelled');
       showToast(t('toast.orderCancelled'));
       renderOrdersView();
@@ -2838,48 +2853,151 @@ function render(){
   }
 }
 var calcUnit = 'ft';
-function renderCalculatorView(){
-  var purposeTypes = calcPurposeTypes();
-  main.innerHTML =
-    '<div class="section-title"><span>'+t('calc.title')+'</span></div>' +
-    '<p class="ac-sub mb-2" style="padding:0 2px;">'+t('calc.intro')+'</p>' +
-    '<div class="account-card mb-3">' +
-      '<div class="admin-form-grid">' +
-        '<div class="full">' +
-          '<label>'+t('calc.purposeType')+'</label>' +
-          '<select id="calcPurpose">' +
-            '<option value="">'+t('calc.selectPurpose')+'</option>' +
-            purposeTypes.map(function(pt){ return '<option value="'+esc(pt)+'">'+esc(pt)+'</option>'; }).join('') +
-          '</select>' +
-        '</div>' +
-        '<div>' +
-          '<label>'+t('calc.depth')+'</label>' +
-          '<div style="display:flex; gap:6px;">' +
-            '<input type="number" id="calcDepth" min="1" style="flex:1;">' +
-            '<div style="display:flex; border:1.3px solid #ddd3ba; border-radius:6px; overflow:hidden;">' +
-              '<button type="button" class="unit-btn active" data-unit="ft" style="padding:0 10px; border:none; background:var(--navy-900); color:#fff; font-size:12px; font-weight:600;">'+t('calc.unitFt')+'</button>' +
-              '<button type="button" class="unit-btn" data-unit="m" style="padding:0 10px; border:none; background:#fff; color:var(--ink-700); font-size:12px; font-weight:600;">'+t('calc.unitM')+'</button>' +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-        '<div><label>'+t('calc.diameter')+'</label><input type="number" id="calcDiameter" min="0"></div>' +
-      '</div>' +
-      '<button class="btn-royal mt-3" id="calcCalculateBtn" style="width:100%;">'+t('calc.calculate')+'</button>' +
-    '</div>' +
-    '<div id="calcResults"></div>';
-
-  main.querySelectorAll('.unit-btn').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      calcUnit = btn.getAttribute('data-unit');
-      main.querySelectorAll('.unit-btn').forEach(function(b){
-        var active = b === btn;
-        b.classList.toggle('active', active);
-        b.style.background = active ? 'var(--navy-900)' : '#fff';
-        b.style.color = active ? '#fff' : 'var(--ink-700)';
-      });
-    });
+/* ================= Dealer Calculator (each dealer builds his own) =================
+   A calculator = a name + his own input fields (e.g. "Bathrooms", "Floors", "Area") + a list of products.
+   Each product's quantity = fixed qty + Σ (field value × qty per 1 of that field), plus an optional waste %.
+   He sets his own margin, then adds everything to the cart or makes a PDF quote for his customer.
+   Saved on this device only (like the quote maker). */
+var DC = { id: null, vals: {}, margin: 0 };
+var QT_PRESET = null;                                   /* lets the calculator hand its items to the quote maker */
+function dcLoad(){ try{ var l = JSON.parse(localStorage.getItem('ac_dcalc_' + session) || '[]'); return Array.isArray(l) ? l.filter(function(t){ return t && t.id && Array.isArray(t.fields) && Array.isArray(t.items); }) : []; }catch(e){ return []; } }
+function dcSave(l){ try{ localStorage.setItem('ac_dcalc_' + session, JSON.stringify(l)); return true; }catch(e){ showToast('Could not save — browser storage is full'); return false; } }
+function dcNewId(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+function dcNum(v){ var n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
+function dcQty(t, it, vals){
+  var q = dcNum(it.base);
+  (t.fields || []).forEach(function(f){ q += dcNum(vals[f.id]) * dcNum((it.coef || {})[f.id]); });
+  q = q * (1 + dcNum(t.waste) / 100);
+  return q > 0 ? Math.ceil(q - 1e-9) : 0;
+}
+function dcLines(t, vals, margin){
+  var out = [];
+  (t.items || []).forEach(function(it){
+    var p = PRODUCTS.find(function(x){ return x.id === it.pid; }); if(!p) return;
+    var qty = dcQty(t, it, vals); if(!qty) return;
+    var cost = finalPrice(p, session, qty), sell = r2(cost * (1 + dcNum(margin) / 100));
+    out.push({ p: p, qty: qty, cost: cost, sell: sell, line: r2(sell * qty), costLine: r2(cost * qty) });
   });
-  document.getElementById('calcCalculateBtn').addEventListener('click', runCalculator);
+  return out;
+}
+function dcStartVals(t){ var v = {}; (t.fields || []).forEach(function(f){ v[f.id] = f.def !== undefined && f.def !== '' ? f.def : ''; }); return v; }
+
+function renderCalculatorView(){
+  var list = dcLoad();
+  if(!list.length){
+    main.innerHTML = '<div class="section-title"><span>🧮 Calculator</span></div>' +
+      '<div class="empty-note"><div class="en-big">Make your own calculator</div><div class="mb-3">Create rules like <b>Bathroom</b>, <b>House</b> or <b>Terrace</b> with your own fields (e.g. number of bathrooms) and the products needed. Then get a quick quotation in seconds.</div>' +
+      '<button class="btn-royal" id="dcNew">＋ Create my first calculator</button>' +
+      '<div class="ac-sub" style="margin-top:12px">Quick start:</div><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:6px"><button class="filter-chip" data-dcpre="Bathroom">🚿 Bathroom</button><button class="filter-chip" data-dcpre="House">🏠 House</button><button class="filter-chip" data-dcpre="Terrace">🏢 Terrace</button></div></div>';
+    document.getElementById('dcNew').onclick = function(){ dcEditor(null); };
+    main.querySelectorAll('[data-dcpre]').forEach(function(b){ b.onclick = function(){ dcEditor(null, b.getAttribute('data-dcpre')); }; });
+    return;
+  }
+  if(!DC.id || !list.some(function(t){ return t.id === DC.id; })){ DC.id = list[0].id; DC.vals = dcStartVals(list[0]); DC.margin = dcNum(list[0].margin); }
+  var tpl = list.filter(function(x){ return x.id === DC.id; })[0];
+  main.innerHTML = '<div class="section-title"><span>🧮 Calculator</span><button class="btn-admin sm outline" id="dcManage">⚙ Manage</button></div>' +
+    '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px">' + list.map(function(x){ return '<button class="filter-chip' + (x.id === DC.id ? ' active' : '') + '" data-dcsel="' + esc(x.id) + '">' + esc(x.name) + '</button>'; }).join('') + '</div>' +
+    '<div class="account-card mb-3"><div class="admin-form-grid">' +
+      (tpl.fields.length ? tpl.fields.map(function(f){ return '<div><label>' + esc(f.label) + (f.unit ? ' <span class="ac-sub">(' + esc(f.unit) + ')</span>' : '') + '</label><input type="number" min="0" step="any" inputmode="decimal" data-dcf="' + esc(f.id) + '" value="' + esc(DC.vals[f.id] === undefined ? '' : DC.vals[f.id]) + '"></div>'; }).join('') : '<div class="full ac-sub">This calculator has no input fields — it just lists a fixed set of products.</div>') +
+      '<div><label>My margin %</label><input type="number" min="0" step="any" inputmode="decimal" id="dcMargin" value="' + esc(DC.margin) + '"></div>' +
+    '</div></div><div id="dcResult"></div>';
+  document.getElementById('dcManage').onclick = dcManager;
+  main.querySelectorAll('[data-dcsel]').forEach(function(b){ b.onclick = function(){ var x = list.filter(function(y){ return y.id === b.getAttribute('data-dcsel'); })[0]; DC.id = x.id; DC.vals = dcStartVals(x); DC.margin = dcNum(x.margin); renderCalculatorView(); }; });
+  main.querySelectorAll('[data-dcf]').forEach(function(i){ i.addEventListener('input', function(){ DC.vals[i.getAttribute('data-dcf')] = i.value; dcPaintResult(tpl); }); });
+  document.getElementById('dcMargin').addEventListener('input', function(e){ DC.margin = dcNum(e.target.value); dcPaintResult(tpl); });
+  dcPaintResult(tpl);
+}
+function dcPaintResult(tpl){
+  var box = document.getElementById('dcResult'); if(!box) return;
+  var lines = dcLines(tpl, DC.vals, DC.margin);
+  if(!lines.length){ box.innerHTML = '<div class="empty-note"><div class="en-big">Enter the details above</div><div>The products and quantities appear here.</div></div>'; return; }
+  var sell = r2(lines.reduce(function(a, l){ return a + l.line; }, 0)), cost = r2(lines.reduce(function(a, l){ return a + l.costLine; }, 0));
+  box.innerHTML = '<div class="admin-card mb-3"><div class="ac-title" style="margin-bottom:8px">' + esc(tpl.name) + '</div>' +
+    lines.map(function(l){ return '<div class="oi-line"><span>' + esc(l.p.name) + (l.p.size && l.p.name.indexOf(l.p.size) < 0 ? ' (' + esc(l.p.size) + ')' : '') + ' × ' + l.qty + '</span><span>' + money(l.line) + '</span></div>'; }).join('') +
+    '<div class="oi-line" style="font-weight:700"><span>Total for my customer</span><span>' + money(sell) + '</span></div>' +
+    '<div class="ac-sub" style="margin-top:6px">My cost ' + money(cost) + ' · my profit ' + money(r2(sell - cost)) + ' (only you see this)</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn-royal" id="dcCart" style="flex:1;min-width:140px">🛒 Add all to cart</button><button class="btn-royal" id="dcQuote" style="flex:1;min-width:140px;background:#1e7b46">📄 Quote for customer</button></div></div>';
+  document.getElementById('dcCart').onclick = function(){
+    var cart = getCart(), short = 0;
+    lines.forEach(function(l){ var stock = effStock(l.p), cur = cart[l.p.id] || 0, room = stock === Infinity ? l.qty : Math.max(0, stock - cur), add = Math.min(l.qty, room); if(add < l.qty) short++; if(add > 0) cart[l.p.id] = cur + add; });
+    saveCart(cart); updateCartBadges(); renderProductGrids(); showToast(short ? 'Added — ' + short + ' item(s) limited by stock' : t('toast.calcAdded'));
+  };
+  document.getElementById('dcQuote').onclick = function(){ QT_PRESET = { items: lines.map(function(l){ return { id: l.p.id, qty: l.qty }; }), margin: DC.margin }; openQuoteMaker(); };
+}
+
+/* ---- manage: list of my calculators ---- */
+function dcManager(){
+  var list = dcLoad();
+  var w = toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🧮 My calculators</h3><div class="sub">Make as many as you like: Bathroom, House, Terrace …</div></div><button type="button" class="acpay-btn ghost" id="dcmX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    (list.length ? list.map(function(x){ return '<div class="qt-item" style="grid-template-columns:1fr auto"><div><b>' + esc(x.name) + '</b><div class="qt-sub">' + x.fields.length + ' field(s) · ' + x.items.length + ' product(s)</div></div><div><button type="button" class="acpay-btn ghost" data-dced="' + esc(x.id) + '" style="padding:4px 10px;font-size:12px">Edit</button> <button type="button" class="acpay-btn ghost" data-dcdup="' + esc(x.id) + '" style="padding:4px 10px;font-size:12px">Copy</button></div></div>'; }).join('') : '<div class="sub" style="padding:10px 0">No calculators yet.</div>') +
+    '<div class="acpay-row"><button type="button" class="acpay-btn green" id="dcmNew">＋ New calculator</button></div>', true);
+  w.querySelector('#dcmX').onclick = paySheetClose;
+  w.querySelector('#dcmNew').onclick = function(){ dcEditor(null); };
+  w.querySelectorAll('[data-dced]').forEach(function(b){ b.onclick = function(){ dcEditor(b.getAttribute('data-dced')); }; });
+  w.querySelectorAll('[data-dcdup]').forEach(function(b){ b.onclick = function(){ var l = dcLoad(), x = l.filter(function(y){ return y.id === b.getAttribute('data-dcdup'); })[0]; if(!x) return; var c = JSON.parse(JSON.stringify(x)); c.id = dcNewId('c'); c.name = x.name + ' (copy)'; l.push(c); if(dcSave(l)){ showToast('Copied'); dcManager(); if(currentView === 'calculator') renderCalculatorView(); } }; });
+}
+
+/* ---- editor ---- */
+var DC_PRESETS = {
+  Bathroom: { fields: [{ label: 'Number of bathrooms', unit: 'nos', def: 1 }] },
+  House: { fields: [{ label: 'Floors', unit: 'nos', def: 1 }, { label: 'Bathrooms', unit: 'nos', def: 1 }, { label: 'Kitchens', unit: 'nos', def: 1 }] },
+  Terrace: { fields: [{ label: 'Terrace area', unit: 'sq ft', def: '' }] }
+};
+function dcEditor(id, preset){
+  var base = id ? dcLoad().filter(function(x){ return x.id === id; })[0] : null, E;
+  if(base) E = JSON.parse(JSON.stringify(base));
+  else { E = { id: dcNewId('c'), name: preset || '', fields: [], items: [], waste: 0, margin: 0 };
+    if(preset && DC_PRESETS[preset]) E.fields = DC_PRESETS[preset].fields.map(function(f){ return { id: dcNewId('f'), label: f.label, unit: f.unit, def: f.def }; }); }
+  var idx = buildProductIndex();
+  var w = toolSheet('<div id="dcEd"></div>', true);
+  function paint(){
+    var box = w.querySelector('#dcEd');
+    box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>' + (base ? 'Edit calculator' : 'New calculator') + '</h3><div class="sub">Quantity of a product = fixed qty + (field value × qty per 1 of that field).</div></div><button type="button" class="acpay-btn ghost" id="dceX" style="flex:none;padding:6px 12px">✕</button></div>' +
+      '<label class="l">Calculator name</label><input id="dceName" placeholder="e.g. Bathroom, House, Terrace" value="' + esc(E.name) + '">' +
+      '<div class="qt-sec"><b style="font-size:13px">1. Input fields</b> <span class="sub">(what you type each time)</span>' +
+        E.fields.map(function(f, i){ return '<div class="acpay-row" style="align-items:flex-end"><div style="flex:2"><label class="l" style="margin-top:6px">Field name</label><input data-ff="label" data-i="' + i + '" value="' + esc(f.label) + '" placeholder="e.g. Bathrooms"></div><div style="flex:1"><label class="l" style="margin-top:6px">Unit</label><input data-ff="unit" data-i="' + i + '" value="' + esc(f.unit || '') + '" placeholder="nos / ft"></div><div style="flex:1"><label class="l" style="margin-top:6px">Default</label><input type="number" data-ff="def" data-i="' + i + '" value="' + esc(f.def === undefined ? '' : f.def) + '"></div><div style="flex:none"><button type="button" class="acpay-btn ghost" data-ffdel="' + i + '" style="padding:8px 10px" aria-label="Remove field">✕</button></div></div>'; }).join('') +
+        '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="dceAddF">＋ Add field</button></div></div>' +
+      '<div class="qt-sec"><b style="font-size:13px">2. Products needed</b>' +
+        '<input id="dceSearch" placeholder="🔍 Search a product to add…" style="margin-top:8px"><div id="dceRes" class="qo-res"></div>' +
+        (E.items.length ? E.items.map(function(it, i){
+          var p = PRODUCTS.find(function(x){ return x.id === it.pid; });
+          return '<div class="qt-item" style="grid-template-columns:1fr auto"><div><b>' + esc(p ? p.name : '(removed product)') + '</b><div class="qt-sub">' + esc(p ? ((p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + p.part) : '') + '</div></div><div style="text-align:right"><button type="button" class="acpay-btn ghost" data-itdel="' + i + '" style="padding:3px 9px;font-size:12px" aria-label="Remove product">✕</button></div>' +
+            '<div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:90px"><label class="qt-sub">Fixed qty</label><input type="number" min="0" step="any" data-itb="' + i + '" value="' + esc(it.base || '') + '" placeholder="0"></div>' +
+            E.fields.map(function(f){ return '<div style="flex:1;min-width:90px"><label class="qt-sub">per 1 ' + esc(f.label || 'field') + '</label><input type="number" min="0" step="any" data-itc="' + i + '" data-fid="' + esc(f.id) + '" value="' + esc((it.coef || {})[f.id] || '') + '" placeholder="0"></div>'; }).join('') + '</div></div>';
+        }).join('') : '<div class="sub" style="padding:8px 0">No products yet — search above.</div>') + '</div>' +
+      '<div class="acpay-row"><div><label class="l">Extra for waste / cutting %</label><input id="dceWaste" type="number" min="0" step="any" value="' + esc(E.waste || 0) + '"></div><div><label class="l">Default margin %</label><input id="dceMargin" type="number" min="0" step="any" value="' + esc(E.margin || 0) + '"></div></div>' +
+      '<div class="acpay-err" id="dceErr"></div>' +
+      '<div class="acpay-row"><button type="button" class="acpay-btn green" id="dceSave">Save calculator</button>' + (base ? '<button type="button" class="acpay-btn red" id="dceDel">Delete</button>' : '') + '</div>';
+    box.querySelector('#dceX').onclick = paySheetClose;
+    box.querySelector('#dceName').oninput = function(e){ E.name = e.target.value; };
+    box.querySelector('#dceWaste').oninput = function(e){ E.waste = dcNum(e.target.value); };
+    box.querySelector('#dceMargin').oninput = function(e){ E.margin = dcNum(e.target.value); };
+    box.querySelector('#dceAddF').onclick = function(){ E.fields.push({ id: dcNewId('f'), label: '', unit: '', def: '' }); paint(); };
+    box.querySelectorAll('[data-ff]').forEach(function(i){ i.oninput = function(){ var f = E.fields[Number(i.getAttribute('data-i'))]; if(f) f[i.getAttribute('data-ff')] = i.value; }; });
+    box.querySelectorAll('[data-ffdel]').forEach(function(b){ b.onclick = function(){ var f = E.fields.splice(Number(b.getAttribute('data-ffdel')), 1)[0]; E.items.forEach(function(it){ if(it.coef) delete it.coef[f.id]; }); paint(); }; });
+    box.querySelectorAll('[data-itdel]').forEach(function(b){ b.onclick = function(){ E.items.splice(Number(b.getAttribute('data-itdel')), 1); paint(); }; });
+    box.querySelectorAll('[data-itb]').forEach(function(i){ i.oninput = function(){ E.items[Number(i.getAttribute('data-itb'))].base = dcNum(i.value); }; });
+    box.querySelectorAll('[data-itc]').forEach(function(i){ i.oninput = function(){ var it = E.items[Number(i.getAttribute('data-itc'))]; it.coef = it.coef || {}; it.coef[i.getAttribute('data-fid')] = dcNum(i.value); }; });
+    box.querySelector('#dceSearch').oninput = function(e){
+      var q = e.target.value.trim(), res = box.querySelector('#dceRes'); if(q.length < 2){ res.innerHTML = ''; return; }
+      var hits = qoFind(q, idx, 6); res.innerHTML = hits.length ? hits.map(function(h){ return '<button type="button" data-dcadd="' + h.p.id + '">' + esc(qoOptLabel(h.p)) + '</button>'; }).join('') : '<div class="qo-hint">No match.</div>';
+    };
+    box.querySelector('#dceRes').onclick = function(e){ var b = e.target.closest('button'); if(!b) return; var pid = Number(b.getAttribute('data-dcadd')); if(!E.items.some(function(x){ return x.pid === pid; })) E.items.push({ pid: pid, base: 0, coef: {} }); paint(); };
+    box.querySelector('#dceSave').onclick = function(){
+      var err = box.querySelector('#dceErr'); err.textContent = '';
+      E.name = E.name.trim(); if(!E.name){ err.textContent = 'Give the calculator a name.'; return; }
+      if(E.fields.some(function(f){ return !String(f.label).trim(); })){ err.textContent = 'Every field needs a name (or remove the empty one).'; return; }
+      if(!E.items.length){ err.textContent = 'Add at least one product.'; return; }
+      if(E.items.some(function(it){ return !dcNum(it.base) && !Object.keys(it.coef || {}).some(function(k){ return dcNum(it.coef[k]) && E.fields.some(function(f){ return f.id === k; }); }); })){ err.textContent = 'Each product needs a fixed qty or a “per 1 …” quantity, otherwise its quantity is always 0.'; return; }
+      E.fields.forEach(function(f){ f.label = String(f.label).trim(); f.unit = String(f.unit || '').trim(); f.def = f.def === '' || f.def === undefined ? '' : dcNum(f.def); });
+      var l = dcLoad(), at = l.findIndex(function(x){ return x.id === E.id; }); if(at >= 0) l[at] = E; else l.push(E);
+      if(!dcSave(l)) return;
+      DC.id = E.id; DC.vals = dcStartVals(E); DC.margin = dcNum(E.margin);
+      paySheetClose(); showToast('Calculator saved ✔'); if(currentView !== 'calculator') setView('calculator'); else renderCalculatorView();
+    };
+    var dl = box.querySelector('#dceDel'); if(dl) dl.onclick = function(){ if(!confirm('Delete this calculator?')) return; dcSave(dcLoad().filter(function(x){ return x.id !== E.id; })); if(DC.id === E.id) DC.id = null; paySheetClose(); showToast('Deleted'); if(currentView === 'calculator') renderCalculatorView(); };
+  }
+  paint();
 }
 
 function runCalculator(){
@@ -3328,6 +3446,38 @@ function adminPayPanelHtml(o){
       '<div style="flex:0 0 auto"><button type="button" class="btn-admin sm" data-pay-save="' + esc(o.id) + '">Save</button></div></div>' +
     ((o.payHistory || []).length ? '<div class="acpay-hist"><b>Log</b><br>' + o.payHistory.map(function(h){ return '• ' + new Date(h.at).toLocaleString('en-IN') + ' — ' + esc(h.action) + (h.amount ? ' ' + money(h.amount) : '') + (h.utr ? ' (ref ' + esc(h.utr) + ')' : '') + (h.by ? ' · ' + esc(h.by) : '') + (h.note ? ' — ' + esc(h.note) : ''); }).join('<br>') + '</div>' : '') + '</div>';
 }
+(function(){ if(document.getElementById('acAdmCss')) return; var st = document.createElement('style'); st.id = 'acAdmCss';
+  st.textContent = [
+  '.tab-count.pay{background:#e08a00}',
+  '.ah-who{font-size:12px;color:#fff;background:rgba(255,255,255,.14);border-radius:99px;padding:3px 10px;margin-right:8px;white-space:nowrap;max-width:46vw;overflow:hidden;text-overflow:ellipsis}',
+  '.dealer-table tr.dealer-child td:first-child{padding-left:26px}.dl-branch{color:#9aa3b5;margin-right:4px}.dl-tog{border:0;background:#eef1f8;border-radius:6px;width:22px;height:22px;line-height:20px;margin-right:6px;cursor:pointer;color:#17325c;font-size:11px;padding:0}',
+  '.dl-chip{display:inline-block;font-size:10px;font-weight:600;border-radius:99px;padding:1px 8px;background:#e9eef8;color:#17325c;margin-left:6px}.dl-chip.kid{background:#f3efe0;color:#5a5233}',
+  '.cancel-note{background:#fdf1f1;border:1px solid #f3c9c9;border-radius:10px;padding:8px 12px;font-size:13px;color:#7a2a2a;margin:8px 0}',
+  '.cfg-sec{margin-bottom:18px}.cfg-sec h3{font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin:0 2px 8px}',
+  '.cfg-list{background:#fff;border:1px solid #ebe4cd;border-radius:14px;overflow:hidden}',
+  '.cfg-item{display:flex;gap:12px;align-items:center;padding:13px 14px;border-top:1px solid #f0ead8;cursor:pointer}.cfg-item:first-child{border-top:0}.cfg-item:hover{background:#faf7ee}',
+  '.cfg-ic{font-size:22px;width:34px;text-align:center;flex:none}.cfg-tx{flex:1;min-width:0}.cfg-tx b{display:block;font-size:14.5px}.cfg-tx span{display:block;font-size:12.5px;color:#6b7280;margin-top:2px}',
+  '.cfg-go{color:#17325c;font-size:20px;flex:none}.cfg-pill{display:inline-block;font-size:10.5px;font-weight:600;border-radius:99px;padding:1px 8px;margin-left:6px;background:#e4f5ea;color:#1e7b46}.cfg-pill.no{background:#fdf1e0;color:#a56500}'
+  ].join('\n'); document.head.appendChild(st); })();
+
+/* a small pop-up that asks WHY (used when an order is cancelled) */
+function askCancelNote(title, onOk){
+  var w = paySheet('<h3>' + esc(title) + '</h3><div class="sub">The dealer will see this reason on his order.</div><label class="l">Reason for cancelling</label><textarea id="cnNote" rows="3" maxlength="300" placeholder="e.g. Item out of stock / address not serviceable"></textarea><div class="acpay-err" id="cnErr"></div>' +
+    '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="cnNo">Keep order</button><button type="button" class="acpay-btn red" id="cnYes">Cancel order</button></div>');
+  w.querySelector('#cnNo').onclick = paySheetClose;
+  w.querySelector('#cnYes').onclick = function(){
+    var n = w.querySelector('#cnNote').value.trim();
+    if(n.length < 3){ w.querySelector('#cnErr').textContent = 'Please write a short reason (the dealer will read it).'; return; }
+    paySheetClose(); onOk(n);
+  };
+}
+function cancelOrderWithNote(o, note){ o.cancelNote = note; o.cancelledBy = 'admin'; o.cancelledAt = Date.now(); applyOrderStatus(o, 'cancelled'); }
+function cancelNoteHtml(o){
+  if(o.status !== 'cancelled') return '';
+  var by = o.cancelledBy === 'admin' ? 'the shop' : (o.cancelledBy === 'dealer' ? 'you' : '');
+  return '<div class="cancel-note">❌ <b>Cancelled' + (by ? ' by ' + by : '') + '</b>' + (o.cancelNote ? ': ' + esc(o.cancelNote) : '') + '</div>';
+}
+
 /* admin: the payment section opens as a pop-up (button sits next to Invoice in the order details) */
 function openAdminPaySheet(orderId){
   var o = findOrder(orderId); if(!o || o.status === 'cancelled') return;
@@ -3370,17 +3520,50 @@ function payRejectClaim(orderId){
   o.payHistory = (o.payHistory || []).concat([{ at: Date.now(), by: payAdminName(), action: 'Marked not received', amount: o.payClaim.amount, utr: o.payClaim.utr, note: why }]);
   saveOrder(o); logAudit('Payment not received', '#' + o.id + (o.payClaim.utr ? ' · ref ' + o.payClaim.utr : '')); paySheetClose(); showToast('Dealer will see it as not received'); if(adminSession) renderAdminOrders();
 }
-/* red number on the admin "Orders" tab = orders that have been received (placed) and are waiting to be confirmed */
-var ORDERS_BADGE_LAST = null;
+/* Orders tab: red number = new orders waiting (Placed); amber 💳 number = payment claims (full or part) waiting to be verified */
+var ORDERS_BADGE_LAST = null, CLAIMS_SEEN = null;
 function newOrderCount(){ return getAllOrders().filter(function(o){ return o.status === 'placed'; }).length; }
+function pendingClaims(){ return getAllOrders().filter(function(o){ return o.status !== 'cancelled' && o.payClaim && o.payClaim.status === 'pending'; }); }
+function claimKey(o){ return o.id + '|' + (o.payClaim.at || '') + '|' + (o.payClaim.amount || ''); }
+function setTabBadge(b, cls, n, title){
+  var c = b.querySelector('.tab-count.' + cls);
+  if(n > 0){ if(!c){ c = document.createElement('span'); c.className = 'tab-count ' + cls; b.appendChild(c); } c.textContent = (cls === 'pay' ? '💳 ' : '') + (n > 99 ? '99+' : n); c.title = title; }
+  else if(c){ c.remove(); }
+}
 function updatePayBadge(){
   var b = document.querySelector('.admin-tabs button[data-atab="orders"]'); if(!b) return;
-  var n = newOrderCount(), c = b.querySelector('.tab-count');
-  if(n > 0){ if(!c){ c = document.createElement('span'); c.className = 'tab-count'; b.appendChild(c); } c.textContent = n > 99 ? '99+' : String(n); b.title = n + ' new order' + (n === 1 ? '' : 's') + ' waiting'; }
-  else if(c){ c.remove(); b.removeAttribute('title'); }
-  if(ORDERS_BADGE_LAST !== null && n > ORDERS_BADGE_LAST && adminSession) showToast('🧾 New order received');
-  ORDERS_BADGE_LAST = n;
+  var n = newOrderCount(), cl = pendingClaims();
+  setTabBadge(b, 'new', n, n + ' new order' + (n === 1 ? '' : 's') + ' waiting');
+  setTabBadge(b, 'pay', cl.length, cl.length + ' payment' + (cl.length === 1 ? '' : 's') + ' to verify');
+  var msgs = [];
+  if(ORDERS_BADGE_LAST !== null && n > ORDERS_BADGE_LAST) msgs.push('🧾 New order received');
+  var keys = cl.map(claimKey);
+  if(CLAIMS_SEEN !== null){
+    cl.forEach(function(o){ if(CLAIMS_SEEN.indexOf(claimKey(o)) < 0){ var due = orderPayable(o), amt = Number(o.payClaim.amount) || 0; msgs.push('💳 ' + (amt < due - 0.5 ? 'Part payment ' + money(amt) + ' of ' + money(due) : 'Payment ' + money(amt)) + ' reported on #' + o.id); } });
+  }
+  ORDERS_BADGE_LAST = n; CLAIMS_SEEN = keys;
+  if(msgs.length && adminSession) showToast(msgs.join('  ·  '));
 }
+/* every 5 seconds: pick up anything that arrived (orders, payments), update the badges and refresh the screen being looked at */
+var ADMIN_SIG = null, ADMIN_TICKS = 0;
+function adminSignature(){
+  var os = getAllOrders(), us = getUsers();
+  return os.length + '#' + Object.keys(us).length + '#' + os.map(function(o){ return o.id + ':' + o.status + ':' + (o.paymentStatus || '') + ':' + (o.paidAmount || '') + ':' + (o.payClaim ? o.payClaim.status + (o.payClaim.at || '') : '') + ':' + (o.cancelNote ? 1 : 0); }).join(',');
+}
+function adminBusy(){
+  if(document.getElementById('acPaySheet') || document.getElementById('dmOv') || document.getElementById('dvOv') || document.querySelector('.modal.show, .offcanvas.show')) return true;
+  var a = document.activeElement; return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== 'button' && document.getElementById('adminMain') && document.getElementById('adminMain').contains(a));
+}
+function adminTick(){
+  if(!adminSession) return;
+  ADMIN_TICKS++;
+  try{ updatePayBadge(); }catch(e){}
+  var sig = adminSignature();
+  if(ADMIN_SIG !== null && sig !== ADMIN_SIG && !adminBusy() && /^(dashboard|orders|customers)$/.test(currentAdminTab)){ try{ renderAdmin(); }catch(e){} }
+  ADMIN_SIG = sig;
+  if(ADMIN_TICKS % 12 === 0 && window.AC_CLOUD && AC_CLOUD.syncIndexes) AC_CLOUD.syncIndexes();
+}
+setInterval(adminTick, 5000);
 document.addEventListener('click', function(e){
   var t = e.target.closest ? e.target.closest('[data-pay-open],[data-pay-confirm],[data-pay-reject],[data-pay-save],[data-pay-popup],[data-pay-quick],[data-payfilter]') : null; if(!t) return;
   var v;
@@ -3403,7 +3586,6 @@ document.addEventListener('change', function(e){
   else if(t && t.id === 'ordPayFilter'){ ORDER_UI.pay = t.value; ORDER_UI.page = 1; renderAdminOrders(); }
   else if(t && t.hasAttribute && t.hasAttribute('data-pay-sel')){ var bx = t.closest('[data-pay-oid]'), ab = bx && bx.querySelector('[data-pay-amtbox]'); if(ab) ab.style.display = t.value === 'partial' ? '' : 'none'; }
 });
-setInterval(function(){ if(adminSession) updatePayBadge(); }, 5000);
 
 /* ================= Dealer tools: quick order (paste a list), cart nudges, quote maker =================
    Everything here runs in the browser on data the app already loaded — ZERO extra Firestore reads or writes,
@@ -3842,6 +4024,7 @@ function openQuoteMaker(){
   QT.margin = 0; QT.round = pf.round !== undefined ? Number(pf.round) || 0 : 0; QT.days = pf.days || 7; QT.gstMode = pf.gstMode === 'sep' ? 'sep' : 'incl'; QT.notes = pf.notes || ''; QT.watermark = !!pf.watermark;
   QT.customer = ''; QT.phone = ''; QT.deliveryOn = false; QT.delivery = 0; QT.discOn = false; QT.discType = 'flat'; QT.discValue = 0; QT.no = null;
   var cart = getCart(); QT.items = Object.keys(cart).map(function(id){ return { id: Number(id), qty: cart[id], manual: false, price: 0 }; }).filter(function(it){ return PRODUCTS.some(function(p){ return p.id === it.id; }); });
+  if(QT_PRESET){ QT.items = QT_PRESET.items.filter(function(it){ return PRODUCTS.some(function(p){ return p.id === it.id; }); }).map(function(it){ return { id: it.id, qty: it.qty, manual: false, price: 0 }; }); QT.margin = dcNum(QT_PRESET.margin); QT_PRESET = null; }
   qtRecalc();
   ensureJsPdf().catch(function(){});            // fetch the PDF tool now so the buttons respond instantly
   toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>📄 Quote for my customer</h3><div class="sub">Make a neat PDF quote with your own margin. Your buying price is never shown on it.</div></div><button type="button" class="acpay-btn ghost" id="qtX" style="flex:none;padding:6px 12px">✕</button></div>' +
@@ -3849,7 +4032,7 @@ function openQuoteMaker(){
       '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><div class="qt-logo" id="qtLogoBox"></div><div style="display:flex;flex-direction:column;gap:6px"><button type="button" class="acpay-btn ghost" id="qtLogoPick" style="padding:7px 12px;font-size:13px"></button><button type="button" class="acpay-btn ghost" id="qtLogoDel" style="padding:7px 12px;font-size:13px;color:#b23b3b">Remove logo</button></div><input type="file" id="qtLogoFile" accept="image/*" style="display:none"></div>' +
       '<label class="qt-chk"><input type="checkbox" id="qtWm"' + (QT.watermark ? ' checked' : '') + '> Show as a light watermark behind the quote</label><div class="sub" id="qtWmHint"></div></div>' +
     '<div class="acpay-row"><div><label class="l">Customer name</label><input id="qtCust" placeholder="e.g. Ramesh Constructions"></div><div><label class="l">Customer phone</label><input id="qtPhone" type="tel" inputmode="tel" placeholder="for WhatsApp"></div></div>' +
-    '<div class="acpay-row"><div><label class="l">My margin %</label><input id="qtMargin" type="number" step="any" min="0" value="0"></div><div><label class="l">Round prices up to</label><select id="qtRound"><option value="0">Exact</option><option value="1">₹1</option><option value="5">₹5</option><option value="10">₹10</option></select></div><div><label class="l">Valid for (days)</label><input id="qtDays" type="number" min="1" value="' + QT.days + '"></div></div>' +
+    '<div class="acpay-row"><div><label class="l">My margin %</label><input id="qtMargin" type="number" step="any" min="0" value="' + QT.margin + '"></div><div><label class="l">Round prices up to</label><select id="qtRound"><option value="0">Exact</option><option value="1">₹1</option><option value="5">₹5</option><option value="10">₹10</option></select></div><div><label class="l">Valid for (days)</label><input id="qtDays" type="number" min="1" value="' + QT.days + '"></div></div>' +
     '<div class="qt-sec"><b style="font-size:13px">GST on the quote</b>' +
       '<label class="qt-chk"><input type="radio" name="qtGstMode" value="incl"' + (QT.gstMode === 'incl' ? ' checked' : '') + '> Include GST in the prices <span class="sub">(default)</span></label>' +
       '<label class="qt-chk"><input type="radio" name="qtGstMode" value="sep"' + (QT.gstMode === 'sep' ? ' checked' : '') + '> Show GST separately</label></div>' +
@@ -3954,8 +4137,10 @@ function openDealerTools(){
   toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🧰 Dealer tools</h3><div class="sub">Faster ordering and selling.</div></div><button type="button" class="acpay-btn ghost" id="dtX" style="flex:none;padding:6px 12px">✕</button></div>' +
     '<div class="pay-choice" style="margin-top:12px"><button type="button" class="acpay-btn ghost" id="dtQuick" style="display:block;width:100%;text-align:left;margin:6px 0">📋 <b>Quick order</b><br><span class="sub">Paste a WhatsApp / notebook list — we fill the cart</span></button>' +
     '<button type="button" class="acpay-btn ghost" id="dtQuote" style="display:block;width:100%;text-align:left;margin:6px 0">📄 <b>Quote for my customer</b><br><span class="sub">Add your margin, then download or WhatsApp a PDF quote</span></button>' +
+    '<button type="button" class="acpay-btn ghost" id="dtCalc" style="display:block;width:100%;text-align:left;margin:6px 0">🧮 <b>Calculator</b><br><span class="sub">Make your own rules (Bathroom, House, Terrace …) and get a quick quotation</span></button>' +
     '<button type="button" class="acpay-btn ghost" id="dtBulk" style="display:block;width:100%;text-align:left;margin:6px 0">📤 <b>Bulk order from Excel</b><br><span class="sub">Upload a sheet of item codes and quantities</span></button></div>');
   $t('dtX').onclick = paySheetClose; $t('dtQuick').onclick = openQuickOrder; $t('dtQuote').onclick = openQuoteMaker;
+  $t('dtCalc').onclick = function(){ paySheetClose(); dcManager(); };
   $t('dtBulk').onclick = function(){ paySheetClose(); var f = document.getElementById('bulkOrderFile'); if(f) f.click(); };
 }
 
@@ -4279,15 +4464,24 @@ document.querySelectorAll('.admin-tabs button[data-atab]').forEach(function(btn)
   });
 });
 
+function showAdminWho(){
+  var row = document.querySelector('.admin-header .ah-row'), lo = document.getElementById('adminLogoutBtn'); if(!row || !lo) return;
+  var nm = (window.AC_CLOUD && AC_CLOUD.enabled && AC_CLOUD.staffName) || localStorage.getItem('ac_admin_user') || 'Admin';
+  var role = window.AC_CLOUD && AC_CLOUD.enabled && AC_CLOUD.staffRole && AC_CLOUD.staffRole !== 'owner' ? ' · ' + AC_CLOUD.staffRole : (window.AC_CLOUD && AC_CLOUD.enabled ? ' · owner' : '');
+  var el = document.getElementById('ahWho'); if(!el){ el = document.createElement('span'); el.id = 'ahWho'; el.className = 'ah-who'; row.insertBefore(el, lo); }
+  el.textContent = '👤 ' + nm + role;
+}
 function renderAdmin(){
   clearDashboardInterval();
+  showAdminWho();
+  var calcTab = document.querySelector('.admin-tabs button[data-atab="calc"]'); if(calcTab) calcTab.remove();      // the admin bore-calculator is gone: dealers make their own calculators
   updatePayBadge();
   if(currentAdminTab === 'dashboard') renderAdminDashboard();
   else if(currentAdminTab === 'orders') renderAdminOrders();
   else if(currentAdminTab === 'customers') renderAdminCustomers();
   else if(currentAdminTab === 'products') renderAdminProducts();
   else if(currentAdminTab === 'catalog') renderAdminCatalog();
-  else if(currentAdminTab === 'calc') renderAdminCalcRules();
+  else if(currentAdminTab === 'calc') goToAdminTab('configuration');
   else if(currentAdminTab === 'marketing') renderAdminMarketing();
   else if(currentAdminTab === 'banners' || currentAdminTab === 'offers' || currentAdminTab === 'broadcast'){
     MARKETING_VIEW = currentAdminTab; currentAdminTab = 'marketing'; renderAdminMarketing();   // legacy tab names
@@ -4295,7 +4489,7 @@ function renderAdmin(){
   else if(currentAdminTab === 'configuration') renderAdminConfiguration();
   else if(currentAdminTab === 'reports') renderAdminReports();    
   else if(currentAdminTab === 'distributors' && window.__acAdminTabs && window.__acAdminTabs.distributors) window.__acAdminTabs.distributors();
-  else if(currentAdminTab === 'data' && window.__acAdminTabs && window.__acAdminTabs.data) window.__acAdminTabs.data();
+  else if(currentAdminTab === 'data'){ if(window.__acAdminTabs && window.__acAdminTabs.data) window.__acAdminTabs.data(); else renderLocalData(); }
 }
 
 /* ---------------- Dashboard tab ---------------- */
@@ -4739,6 +4933,7 @@ function orderDetailHtml0(o){
       '<div class="oi-line" style="font-weight:700;"><span>Payable</span><span>'+money(payable)+'</span></div>' +
     '</div>' +
     (o.discount ? '<div class="discount-applied-tag">🎁 '+(o.discount.type==='flat' ? money(o.discount.value) : o.discount.value+'%')+' off applied</div>' : '') +
+    cancelNoteHtml(o) +
     '<div class="ac-actions">' +
       (canCancel ? '<button class="btn-admin sm maroon" data-cancel="'+esc(o.id)+'">Cancel</button>' : '') +
       (canEditItems ? '<button class="btn-admin sm outline" data-edit-toggle="'+esc(o.id)+'">✏ Edit items</button>' : '') +
@@ -5118,11 +5313,12 @@ function wireOrderListUi(filtered, pageOrders, selIds){
     $('ordBulkCancel').addEventListener('click', function(){
       var list = picked().filter(function(o){ return o.status !== 'delivered' && o.status !== 'cancelled'; });
       if(!list.length){ showToast('Nothing to cancel — delivered/cancelled orders are skipped'); return; }
-      if(!confirm('Cancel '+list.length+' order(s)? This cannot be undone.')) return;
-      list.forEach(function(o){ applyOrderStatus(o, 'cancelled'); });
-      logAudit('Orders bulk cancelled', list.length+' order(s): '+list.slice(0,10).map(function(o){ return '#'+o.id; }).join(', ')+(list.length>10?' …':''));
-      showToast(list.length+' order(s) cancelled');
-      ORDER_UI.selected = {}; renderAdminOrders();
+      askCancelNote('Cancel ' + list.length + ' order(s)?', function(note){
+        list.forEach(function(o){ cancelOrderWithNote(o, note); });
+        logAudit('Orders bulk cancelled', list.length+' order(s): '+list.slice(0,10).map(function(o){ return '#'+o.id; }).join(', ')+(list.length>10?' …':'')+' — '+note);
+        showToast(list.length+' order(s) cancelled');
+        ORDER_UI.selected = {}; renderAdminOrders();
+      });
     });
   }
 }
@@ -5148,8 +5344,7 @@ function wireAdminOrders(){
       var id = btn.getAttribute('data-cancel');
       var o = findOrder(id);
       if(!o) return;
-      if(!confirm('Cancel order '+id+'?')) return;
-      applyOrderStatus(o, 'cancelled'); showToast('Order '+id+' cancelled'); renderAdminOrders();
+      askCancelNote('Cancel order #' + id + '?', function(note){ cancelOrderWithNote(o, note); logAudit('Order cancelled', '#' + id + ' — ' + note); showToast('Order '+id+' cancelled'); renderAdminOrders(); });
     });
   });
   adminMain.querySelectorAll('[data-discount-toggle]').forEach(function(btn){
@@ -5373,6 +5568,7 @@ function setDealerActive(gst, makeActive){
   showToast((u.business||gst)+(makeActive ? ' can place orders again' : ' is blocked from placing orders'));
   return true;
 }
+var DEALER_COLLAPSED = {};
 function renderAdminCustomers(){
   var adminMain = document.getElementById('adminMain');
   var users = getUsers();
@@ -5393,6 +5589,14 @@ function renderAdminCustomers(){
     var hay = (u.business+' '+gst+' '+(u.phone||'')+' '+(u.contactPerson||'')).toLowerCase();
     return hay.indexOf(dq) !== -1;
   });
+  /* parent / child: businesses that share one login (phone) are grouped — the first one registered is the parent */
+  var acctKey = function(g){ return String(users[g].accountKey || normalizePhone(users[g].phone) || g); };
+  var fullGroup = {}; allGsts.forEach(function(g){ var k = acctKey(g); (fullGroup[k] = fullGroup[k] || []).push(g); });
+  var grouped = {}, gOrder = []; gsts.forEach(function(g){ var k = acctKey(g); if(!grouped[k]){ grouped[k] = []; gOrder.push(k); } grouped[k].push(g); });
+  gsts = []; gOrder.forEach(function(k){
+    var par = fullGroup[k][0], mem = grouped[k].slice().sort(function(a, b){ return a === par ? -1 : b === par ? 1 : 0; });
+    mem.forEach(function(g){ if(g !== par && DEALER_COLLAPSED[k] && !dq) return; gsts.push(g); });
+  });
   var pages = Math.max(1, Math.ceil(gsts.length / DEALER_PAGE_SIZE));
   if(DEALER_PAGE > pages) DEALER_PAGE = pages; if(DEALER_PAGE < 1) DEALER_PAGE = 1;
   var from = (DEALER_PAGE - 1) * DEALER_PAGE_SIZE;
@@ -5409,8 +5613,9 @@ function renderAdminCustomers(){
       pageGsts.map(function(gst){
         var u = users[gst];
         var blocked = u.isActive === false;
-        return '<tr'+(blocked?' style="background:#fdf1f1;"':'')+'>' +
-          '<td>'+esc(u.business||'—')+(u.accountKey ? ' <span style="font-size:9px; color:var(--ink-600);">(linked)</span>' : '')+(blocked?' <span class="low-stock-pill" style="background:#fbdede; color:#a12626; font-size:10px;">Blocked</span>':'')+'</td>' +
+        var ak = acctKey(gst), par = fullGroup[ak][0], isKid = par !== gst, kidN = fullGroup[ak].length - 1;
+        return '<tr'+(isKid?' class="dealer-child"':'')+(blocked?' style="background:#fdf1f1;"':'')+'>' +
+          '<td>'+(isKid ? '<span class="dl-branch">└</span>' : (kidN ? '<button type="button" class="dl-tog" data-dtog="'+esc(ak)+'" title="Show / hide child businesses">'+(DEALER_COLLAPSED[ak]?'▸':'▾')+'</button>' : ''))+(isKid ? '' : '<b>')+esc(u.business||'—')+(isKid ? '' : '</b>')+(isKid ? '<span class="dl-chip kid">child of '+esc((users[par]&&users[par].business)||par)+'</span>' : (kidN ? '<span class="dl-chip">parent · '+kidN+' child'+(kidN>1?'ren':'')+'</span>' : ''))+(blocked?' <span class="low-stock-pill" style="background:#fbdede; color:#a12626; font-size:10px;">Blocked</span>':'')+'</td>' +
           '<td>'+esc(gst)+'</td>' +
           '<td>'+esc(u.contactPerson||'—')+'</td>' +
           '<td>'+esc(u.phone||'—')+'</td>' +
@@ -5436,6 +5641,7 @@ function renderAdminCustomers(){
       if(again){ again.focus(); again.setSelectionRange(cursorPos, cursorPos); }
     });
   }
+  adminMain.querySelectorAll('[data-dtog]').forEach(function(b){ b.addEventListener('click', function(){ var k = b.getAttribute('data-dtog'); DEALER_COLLAPSED[k] = !DEALER_COLLAPSED[k]; renderAdminCustomers(); }); });
   adminMain.querySelectorAll('[data-dstatus]').forEach(function(b){
     b.addEventListener('click', function(){ DEALER_STATUS = b.getAttribute('data-dstatus'); DEALER_PAGE = 1; renderAdminCustomers(); });
   });
@@ -7578,98 +7784,65 @@ function goToAdminTab(tab){
 function renderAdminConfiguration(){
   if(PRICING_OVERVIEW_VIEW){ renderPricingOverview(); return; }
   var adminMain = document.getElementById('adminMain');
-  var cards = [
-    CLOUD ? {
-      icon: '☁', title: 'Cloud sync (Firebase)',
-      sub: 'Live status of the Firebase connection, publish the starting catalog to the cloud, or import data from the old browser-only version.',
-      btn: 'Open Cloud sync',
-      action: function(){ CLOUD.openAdminPanel(); }
-    } : null,
-    {
-      icon: '📊', title: 'Pricing Overview',
-      sub: 'One clear screen for every product\'s MRP → dealer price, and exactly which dealers have a special rate — the audit view for Products & Pricing.',
-      btn: 'Open Pricing Overview',
-      action: function(){ PRICING_OVERVIEW_VIEW = true; renderAdminConfiguration(); }
-    },
-    {
-      icon: '⏱', title: 'Auto-Status Rules',
-      sub: 'Set how quickly a dealer\'s orders auto-advance (confirmed → dispatched → delivered), per dealer or in bulk.',
-      btn: 'Open Auto-Status Rules',
-      action: function(){ ORDER_AUTO_RULES_VIEW = true; goToAdminTab('orders'); }
-    },
-    {
-      icon: '💲', title: 'Dealer-Specific Product Pricing',
-      sub: 'Give an individual dealer a special discount on a product from that product\'s Details → Dealer Pricing panel.',
-      btn: 'Open Products & Pricing',
-      action: function(){ goToAdminTab('products'); }
-    },
-    {
-      icon: '🗂', title: 'Manage Categories',
-      sub: 'Add, rename or reorder catalog categories and sub-categories.',
-      btn: 'Open Manage Categories',
-      action: function(){ CAT_UI.view = 'categories'; goToAdminTab('catalog'); }
-    },
-    {
-      icon: '📐', title: 'Calculator Rules',
-      sub: 'Configure the quantity/price calculator rules shown to dealers.',
-      btn: 'Open Calculator Rules',
-      action: function(){ goToAdminTab('calc'); }
-    },
-    {
-      icon: '🧾', title: 'Invoice Settings',
-      sub: 'Shop name, logo, GSTIN, address and phone shown on every invoice.',
-      btn: 'Open Invoice Settings',
-      action: function(){ openInvoiceSettings(); }
-    },
-    {
-      icon: '🚚', title: 'Home / Delivery Settings',
-      sub: 'Free-delivery minimum, delivery charge, and support phone/email.',
-      btn: 'Open Delivery Settings',
-      action: function(){ openDeliverySettings(); }
-    },
-    {
-      icon: '💳', title: 'Payment QR / UPI',
-      sub: 'Set the UPI ID and QR code dealers pay to (or upload your own bank QR), bank details, and the Pay now / Pay later options.',
-      btn: 'Open payment settings',
-      action: function(){ openInvoiceSettings(); }
-    },
-    (CLOUD && CLOUD.enabled && (!CLOUD.staffRole || CLOUD.staffRole === 'owner')) ? {
-      icon: '🗄', title: 'Data Manager (database browser)',
-      sub: 'Look at everything stored in the database in plain words — orders, dealers, products, distributors … — fix a value, add or delete records, back up and restore. Owner only.',
-      btn: 'Open Data Manager',
-      action: function(){ goToAdminTab('data'); }
-    } : null,
-    (CLOUD && CLOUD.enabled && (!CLOUD.staffRole || CLOUD.staffRole === 'owner')) ? {
-      icon: '☢', title: 'Delete data / Factory reset',
-      sub: 'Wipe orders, dealers, the catalogue, distributors … or everything, and start fresh. You choose what goes and can download a backup first.',
-      btn: 'Open Factory reset',
-      action: function(){ window.__acDataOpen = 'reset'; goToAdminTab('data'); }
-    } : null,
-    {
-      icon: '💾', title: 'Full Backup',
-      sub: 'Download a full backup of orders, dealers, catalog and settings.',
-      btn: 'Download Full Backup',
-      action: function(){ exportFullBackup(); }
-    }
+  var S0 = SETTINGS || {}, owner = !(window.AC_CLOUD && AC_CLOUD.enabled) || !AC_CLOUD.staffRole || AC_CLOUD.staffRole === 'owner';
+  var pill = function(ok, yes, no){ return '<span class="cfg-pill' + (ok ? '' : ' no') + '">' + (ok ? yes : no) + '</span>'; };
+  /* settings only — data tools (backup, restore, reset, cloud) live in the Data tab, products / dealers / categories in their own tabs */
+  var sections = [
+    ['Shop & billing', [
+      { icon: '🧾', title: 'Shop, invoice & payments', sub: 'Shop name, logo, GSTIN, address, UPI / QR / bank details and the Pay now / Pay later options.',
+        tag: pill(!!(S0.shopName || S0.shopGstin), 'Shop set', 'Not set') + pill(!!(S0.upiId || S0.qrImage), 'Payment set', 'No payment details'), action: function(){ openInvoiceSettings(); } },
+      { icon: '🚚', title: 'Delivery & support', sub: 'Free-delivery minimum, delivery charge, support phone and e-mail.',
+        tag: S0.freeDeliveryMin ? '<span class="cfg-pill">Free above ' + money(S0.freeDeliveryMin) + '</span>' : '', action: function(){ openDeliverySettings(); } }
+    ]],
+    ['Orders', [
+      { icon: '⏱', title: 'Auto-status rules', sub: 'How quickly a dealer\'s orders move Confirmed → Dispatched → Delivered on their own (per dealer or in bulk).',
+        tag: '', action: function(){ ORDER_AUTO_RULES_VIEW = true; goToAdminTab('orders'); } }
+    ]],
+    ['Pricing', [
+      { icon: '📊', title: 'Pricing overview', sub: 'Read-only audit: every product\'s MRP → dealer price, and which dealers have a special rate.',
+        tag: '', action: function(){ PRICING_OVERVIEW_VIEW = true; renderAdminConfiguration(); } }
+    ]],
+    ['Data & access', [
+      { icon: '🗄', title: 'Data', sub: 'Backup, restore, browse records, check database access and delete / factory reset — all in the Data tab.',
+        tag: owner ? '' : '<span class="cfg-pill no">Owner only</span>', action: function(){ goToAdminTab('data'); } }
+    ].concat((window.AC_CLOUD && AC_CLOUD.enabled) ? [
+      { icon: '👥', title: 'Staff logins & roles', sub: 'Add managers / viewers and distributor roles (Distributors tab → Access).', tag: '', action: function(){ goToAdminTab('distributors'); } }
+    ] : [])]
   ];
-  cards = cards.filter(Boolean);
-  adminMain.innerHTML =
-    '<div class="admin-toolbar"><h2>⚙️ Configuration</h2><span class="ac-sub">Quick access to admin settings</span></div>' +
-    '<div class="cfg-grid">' +
-      cards.map(function(c, i){
-        return '<div class="admin-card cfg-card">' +
-          '<div class="ac-title">' + c.icon + ' ' + esc(c.title) + '</div>' +
-          '<div class="ac-sub" style="margin-top:6px;">' + esc(c.sub) + '</div>' +
-          '<div class="ac-actions"><button type="button" class="btn-admin sm" data-cfg-idx="' + i + '">' + esc(c.btn) + ' →</button></div>' +
-        '</div>';
-      }).join('') +
-    '</div>';
-  adminMain.querySelectorAll('[data-cfg-idx]').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var idx = Number(btn.getAttribute('data-cfg-idx'));
-      cards[idx].action();
-    });
+  var all = []; 
+  adminMain.innerHTML = '<div class="admin-toolbar"><h2>⚙️ Configuration</h2><span class="ac-sub">Shop settings</span></div>' +
+    sections.map(function(sec){
+      return '<div class="cfg-sec"><h3>' + esc(sec[0]) + '</h3><div class="cfg-list">' + sec[1].map(function(c){
+        all.push(c); var i = all.length - 1;
+        return '<div class="cfg-item" role="button" tabindex="0" data-cfg-idx="' + i + '"><div class="cfg-ic">' + c.icon + '</div><div class="cfg-tx"><b>' + esc(c.title) + (c.tag || '') + '</b><span>' + esc(c.sub) + '</span></div><div class="cfg-go">›</div></div>';
+      }).join('') + '</div></div>';
+    }).join('');
+  adminMain.querySelectorAll('[data-cfg-idx]').forEach(function(el){
+    var go = function(){ all[Number(el.getAttribute('data-cfg-idx'))].action(); };
+    el.addEventListener('click', go); el.addEventListener('keydown', function(e){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } });
   });
+}
+
+/* Data tab when there is no cloud database (browser-only mode): the same idea — backup, reset, in one place */
+function renderLocalData(){
+  var adminMain = document.getElementById('adminMain'); if(!adminMain) return;
+  var rows = [['Dealers', Object.keys(getUsers()).length], ['Orders', getAllOrders().length], ['Products', PRODUCTS.length], ['Banners', BANNERS.length], ['Offers', OFFERS.length], ['Broadcasts', BROADCASTS.length]];
+  adminMain.innerHTML = '<div class="admin-toolbar"><h2>🗄 Data</h2><span class="ac-sub">Stored in this browser only</span></div>' +
+    '<div class="cfg-sec"><h3>What is stored</h3><div class="cfg-list">' + rows.map(function(r){ return '<div class="cfg-item" style="cursor:default"><div class="cfg-tx"><b>' + r[0] + '</b></div><b>' + r[1] + '</b></div>'; }).join('') + '</div></div>' +
+    '<div class="cfg-sec"><h3>Tools</h3><div class="cfg-list">' +
+      '<div class="cfg-item" id="ldBackup"><div class="cfg-ic">💾</div><div class="cfg-tx"><b>Full backup</b><span>Download orders, dealers, catalogue and settings as a file.</span></div><div class="cfg-go">›</div></div>' +
+      '<div class="cfg-item" id="ldReset"><div class="cfg-ic">☢</div><div class="cfg-tx"><b style="color:#b23b3b">Delete all data</b><span>Wipe everything stored in this browser and start fresh. Download a backup first.</span></div><div class="cfg-go">›</div></div>' +
+    '</div></div>';
+  document.getElementById('ldBackup').onclick = exportFullBackup;
+  document.getElementById('ldReset').onclick = function(){
+    var w = paySheet('<h3 style="color:#b23b3b">☢ Delete all data?</h3><div class="sub">Everything in this browser (dealers, orders, catalogue, settings) is removed. This cannot be undone.</div><label class="l">Type <b>DELETE</b> to confirm</label><input id="ldTxt" autocomplete="off"><div class="acpay-err" id="ldErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="ldNo">Cancel</button><button type="button" class="acpay-btn red" id="ldYes">Delete everything</button></div>');
+    w.querySelector('#ldNo').onclick = paySheetClose;
+    w.querySelector('#ldYes').onclick = function(){
+      if(w.querySelector('#ldTxt').value.trim() !== 'DELETE'){ w.querySelector('#ldErr').textContent = 'Type DELETE exactly.'; return; }
+      var ls = window.localStorage, rm = []; for(var i = 0; i < ls.length; i++){ var k = ls.key(i); if(/^ac_/.test(k) && k !== 'ac_admin_session' && k !== 'ac_admin_user') rm.push(k); }
+      rm.forEach(function(k){ ls.removeItem(k); }); location.reload();
+    };
+  };
 }
 
 /* ================= Pricing Overview (Configuration → Pricing Overview) =================
@@ -8486,6 +8659,7 @@ function registerServiceWorkerAndManifest(){
 
 
 function init(){
+  try{ var nt = sessionStorage.getItem('ac_notice'); if(nt){ sessionStorage.removeItem('ac_notice'); setTimeout(function(){ showToast(nt); }, 600); } }catch(e){}
   applyI18n();
   applyBranding();
   if(adminSession && isAdminRoute()){
@@ -8566,7 +8740,15 @@ window.__acRefresh = function(){
   CALC_RULES = loadCalcRules(); BANNERS = loadBanners(); OFFERS = loadOffers(); SETTINGS = loadSettings();
   BROADCASTS = loadBroadcasts(); STOCK_NOTIFY = loadStockNotify();
   if(adminSession){ renderAdmin(); }
-  else if(session && !document.getElementById('appShell').classList.contains('d-none')){ render(); }
+  else if(session && !document.getElementById('appShell').classList.contains('d-none')){
+    if(!getUsers()[session]){                         // this business was deleted while the dealer was using the app
+      var left = Object.keys(getUsers());
+      if(left.length){ session = left[0]; localStorage.setItem('ac_session', session); showToast('This business was removed — switched to ' + (getUsers()[session].business || session)); }
+      else if(CLOUD){ try{ sessionStorage.setItem('ac_notice', 'This account was removed. Please register again or contact the shop.'); }catch(e){} localStorage.removeItem('ac_session'); CLOUD.signOut().then(function(){ CLOUD.reload(); }); return; }
+      else { session = null; localStorage.removeItem('ac_session'); location.reload(); return; }
+    }
+    render();
+  }
 };
 // Publish what the app currently holds (built-in starting catalog, settings…) to the cloud.
 window.__acSeed = function(){

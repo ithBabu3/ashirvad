@@ -70,6 +70,11 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow create, update, delete: if key.matches('staff_.*') ? isOwner() : canWrite();
+      // gst_<GST>: public hash lookup (only hashes of phone / address) used to tell a dealer WHICH detail is wrong on the forgot-password screen.
+      // Only the owner of that GST profile (a signed-in dealer) can write it; the admin can always write (canWrite above).
+      allow create, update: if isDealer() && key.matches('gst_.*')
+          && exists(/databases/$(database)/documents/dealers/$(key.split('_')[1]))
+          && get(/databases/$(database)/documents/dealers/$(key.split('_')[1])).data.get('accountKey', '') == myPhone();
       // dealer_<phone>: forgot-password. A dealer (signed in with the NEW login that was just created) may move the login
       // generation forward only when the phone / GST / address he typed match his saved profile.
       function nz(x) { return x.lower().replace(' ','').replace(',','').replace('.','').replace('-','').replace('/','').replace('#','')

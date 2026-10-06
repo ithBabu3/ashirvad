@@ -64,9 +64,41 @@ function normPhone(p){ return String(p || '').replace(/\D/g, ''); }
    login_index/dealer_<phone> (public single-document read) says which generation is current. */
 function dealerEmail(phone, gen){ return normPhone(phone) + (gen > 0 ? '.r' + gen : '') + '@' + opt.dealerEmailDomain; }
 function normAddr(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function addrKeyOf(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }      // upper / lower case, spaces and punctuation never matter
+function coded(code, msg){ var e = new Error(msg || code); e.code = code; return e; }
+function sha256(str){
+  try{ if(window.crypto && crypto.subtle && window.TextEncoder){
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)).then(function(buf){ return Array.from(new Uint8Array(buf)).map(function(b){ return ('0' + b.toString(16)).slice(-2); }).join(''); });
+  } }catch(e){}
+  return Promise.resolve('h' + hash(str));
+}
 function dealerIdx(ph){
   return db.collection('login_index').doc('dealer_' + ph).get().then(function(d){ var x = d.exists ? d.data() : {}; return { gen: Number(x.gen) || 0 }; }, function(){ return { gen: 0 }; });
 }
+/* login_index/gst_<GST>: a public lookup that holds only HASHES of the phone and address. It lets the forgot-password screen say
+   WHICH detail is wrong (GST / phone / address). It is only a hint — the real check is done by the Firestore rules. */
+function syncGstIndex(list){
+  if(!db || !list || !list.length) return Promise.resolve();
+  if(CLOUD.role === 'admin' && CLOUD.staffRole === 'viewer') return Promise.resolve();
+  var store = rawLocal();
+  var jobs = list.filter(function(d){ return d && d.gst; }).map(function(d){
+    var ph = normPhone(d.accountKey || d.phone), a1 = addrKeyOf(d.address), a2 = addrKeyOf(d.deliveryAddress);
+    var sig = hash(ph + '|' + a1 + '|' + a2), k = 'ac_idx_' + d.gst;
+    if(store.getItem(k) === sig) return null;
+    return function(){
+      var addrs = [a1, a2].filter(function(x, i, arr){ return x && arr.indexOf(x) === i; });
+      return Promise.all([sha256('p:' + ph)].concat(addrs.map(function(x){ return sha256('a:' + x); }))).then(function(h){
+        return db.collection('login_index').doc('gst_' + d.gst).set({ p: h[0], a: h.slice(1), at: Date.now() });
+      }).then(function(){ try{ store.setItem(k, sig); }catch(e){} }, function(){});
+    };
+  }).filter(Boolean);
+  return jobs.reduce(function(p, j){ return p.then(j); }, Promise.resolve());
+}
+CLOUD.syncIndexes = function(){
+  if(CLOUD.role !== 'dealer' && CLOUD.role !== 'admin') return Promise.resolve();
+  var list = []; buckets.ac_users.docs.forEach(function(v, k){ list.push(Object.assign({}, v, { gst: v.gst || k })); });
+  return syncGstIndex(list);
+};
 function adminEmail(user){ return String(user || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@' + opt.adminEmailDomain; }
 function toast(msg){ try{ if(window.__acToast) window.__acToast(msg); else console.warn(msg); }catch(e){} }
 function canon(v){
@@ -359,7 +391,7 @@ function listen(b){
         }
         if(changed){ b.str = undefined; scheduleRefresh(); }
       }, function(err){
-        if(first){ first = false; if(b.cfg && b.cfg.optional){ b.docs = new Map(); b.synced = new Map(); resolve(); } else reject(err); } else console.warn('[cloud] listener error', b.key, err);
+        if(first){ first = false; if(b.cfg && b.cfg.optional){ b.docs = new Map(); b.synced = new Map(); resolve(); } else reject(err); } else { console.warn('[cloud] listener error', b.key, err); setTimeout(function(){ listen(b).catch(function(){}); }, 5000); }
       });
       listeners.push(unsub);
     });
@@ -420,24 +452,26 @@ CLOUD.dealerLogin = function(phone, password){
     });
   });
 };
-/* New dealer (or an existing login adding one more business). */
+/* New dealer, or an existing login adding one more business (same phone, any GST).
+   Only a GST number that already exists is refused. Returns { existing, sameAddress } so the screen can explain what happened. */
 CLOUD.dealerRegister = function(p){
-  var ph = normPhone(p.phone), createdNow = false;
+  var ph = normPhone(p.phone), createdNow = false, info = { existing: false, sameAddress: false };
   return dealerIdx(ph).then(function(ix){
     var email = dealerEmail(ph, ix.gen);
     return auth.createUserWithEmailAndPassword(email, p.password).then(function(){ createdNow = true; }, function(err){
       if(err && err.code === 'auth/email-already-in-use'){
-        return auth.signInWithEmailAndPassword(email, p.password).catch(function(){ var e = new Error('phone'); e.code = 'ac/phone-wrong-password'; throw e; });
+        return auth.signInWithEmailAndPassword(email, p.password).then(function(){ info.existing = true; }, function(){ throw coded('ac/phone-wrong-password', 'phone'); });
       }
       throw err;
     });
   }).then(function(){
-    // duplicate guard: this login already owns a business with the same address -> same dealer registering twice
     return db.collection('dealers').where('accountKey', '==', ph).get().then(function(snap){
-      var dup = snap.docs.some(function(d){ return normAddr(d.data().address) === normAddr(p.address) || normAddr(d.data().deliveryAddress) === normAddr(p.address); });
-      if(!dup) return;
-      var undo = createdNow && auth.currentUser ? auth.currentUser.delete().catch(function(){}) : auth.signOut().catch(function(){});
-      return undo.then(function(){ var e = new Error('duplicate'); e.code = 'ac/duplicate'; throw e; });
+      if(snap.docs.some(function(d){ return d.id === p.gst; })){
+        var undo = createdNow && auth.currentUser ? auth.currentUser.delete().catch(function(){}) : auth.signOut().catch(function(){});
+        return undo.then(function(){ throw coded('ac/gst-exists', 'gst'); });
+      }
+      info.existing = info.existing && snap.size > 0;                      // a login whose businesses were all deleted is treated as a fresh start
+      info.sameAddress = snap.docs.some(function(d){ var x = d.data(); return addrKeyOf(x.address) === addrKeyOf(p.address) || addrKeyOf(x.deliveryAddress) === addrKeyOf(p.address); });
     });
   }).then(function(){
     var profile = {
@@ -447,32 +481,40 @@ CLOUD.dealerRegister = function(p){
     return db.collection('dealers').doc(p.gst).set(profile).catch(function(err){
       var undo = createdNow && auth.currentUser ? auth.currentUser.delete().catch(function(){}) : Promise.resolve();
       return undo.then(function(){
-        if(err && err.code === 'permission-denied'){ var e = new Error('gst'); e.code = 'ac/gst-exists'; throw e; }
+        if(err && err.code === 'permission-denied'){ throw coded('ac/gst-exists', 'gst'); }
         throw err;
       });
-    });
+    }).then(function(){ return syncGstIndex([profile]); });
   }).then(function(){
     return db.collection('accounts').doc(ph).set({ gsts: firebase.firestore.FieldValue.arrayUnion(p.gst) }, { merge: true });
-  });
+  }).then(function(){ return info; });
 };
 
 /* ---- forgot password (self service) ----
    The dealer proves who he is with phone + GST + registered address; the Firestore rules compare those with his saved profile
    (the browser cannot read it before login). If they match, a new login (next generation) is created with the new password. */
 CLOUD.resetPassword = function(req){
-  var ph = normPhone(req.phone), gst = String(req.gst || '').trim().toUpperCase(), addrKey = String(req.address || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  var ph = normPhone(req.phone), gst = String(req.gst || '').trim().toUpperCase(), addrKey = addrKeyOf(req.address);
   function attempt(gen, tries){
     return auth.createUserWithEmailAndPassword(dealerEmail(ph, gen), req.password).then(function(){ return gen; }, function(err){
       if(err && err.code === 'auth/email-already-in-use' && tries < 4) return attempt(gen + 1, tries + 1);
       throw err;
     });
   }
-  return dealerIdx(ph).then(function(ix){
+  // 1) say WHICH detail is wrong (nothing is created yet)
+  return db.collection('login_index').doc('gst_' + gst).get().then(function(d){ return d.exists ? d.data() : null; }, function(){ return null; }).then(function(ix){
+    if(!ix) return;                                          // not in the lookup yet (older dealer) — the rules below decide
+    return Promise.all([sha256('p:' + ph), sha256('a:' + addrKey)]).then(function(h){
+      if(ix.p !== h[0]) throw coded('ac/bad-phone');
+      if((ix.a || []).indexOf(h[1]) < 0) throw coded('ac/bad-address');
+    });
+  }).then(function(){ return dealerIdx(ph); }).then(function(ix){
+    // 2) create the next login, then ask the server (rules) to accept it
     return attempt(ix.gen + 1, 0).then(function(gen){
       return db.collection('login_index').doc('dealer_' + ph).set({ gen: gen, gst: gst, addrKey: addrKey, at: Date.now() }).catch(function(err){
         var undo = auth.currentUser ? auth.currentUser.delete().catch(function(){}) : Promise.resolve();
         return undo.then(function(){
-          if(err && err.code === 'permission-denied'){ var e = new Error('nomatch'); e.code = 'ac/no-match'; throw e; }
+          if(err && err.code === 'permission-denied') throw coded('ac/no-match', 'nomatch');
           throw err;
         });
       });
@@ -602,7 +644,8 @@ function boot(){
       firebase.initializeApp(cfg);
       auth = firebase.auth(); db = firebase.firestore();
       CLOUD.firebase = firebase; CLOUD.auth = auth; CLOUD.db = db;
-      return new Promise(function(res){ var u = auth.onAuthStateChanged(function(user){ u(); res(user); }); });
+      var keep = (firebase.auth.Auth && firebase.auth.Auth.Persistence) ? auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function(){}) : Promise.resolve();   // refresh must not ask for the login again
+      return keep.then(function(){ return new Promise(function(res){ var u = auth.onAuthStateChanged(function(user){ u(); res(user); }); }); });
     })
     .then(function(user){
       if(!user) return finish('none');
@@ -626,7 +669,14 @@ function boot(){
       return auth.signOut().then(function(){ return finish('none'); });
     })
     .then(function(){ hideOverlay(); })
-    .catch(fatal);
+    .catch(function(err){
+      var c = (err && err.code) || '';
+      if(auth && auth.currentUser && /user-disabled|user-not-found|user-token-expired|invalid-user-token|requires-recent-login/.test(c)){
+        try{ sessionStorage.setItem('ac_notice', 'Your login is no longer valid. Please log in again or register.'); }catch(e){}
+        return auth.signOut().catch(function(){}).then(function(){ location.reload(); });
+      }
+      fatal(err);
+    });
 }
 function roleBadge(){
   if(CLOUD.role !== 'admin' || CLOUD.staffRole === 'owner' || document.getElementById('acRoleBadge')) return;
@@ -647,11 +697,16 @@ function finish(role){
     Object.keys(buckets).forEach(function(k){ buckets[k].str = undefined; });
     if(role === 'dealer'){
       var gsts = Array.from(buckets.ac_users.docs.keys());
+      if(!gsts.length){            // every business of this login was deleted: leave cleanly instead of hanging on an empty app
+        try{ sessionStorage.setItem('ac_notice', 'This account was removed. Please register again or contact the shop.'); }catch(e){}
+        return auth.signOut().catch(function(){}).then(function(){ ls.removeItem('ac_session'); location.reload(); });
+      }
       var cur = ls.getItem('ac_session');
       if(!cur || gsts.indexOf(cur) === -1){
         if(gsts.length === 1) ls.setItem('ac_session', gsts[0]); else ls.removeItem('ac_session');
       }
     }
+    setTimeout(function(){ try{ CLOUD.syncIndexes(); }catch(e){} }, 3000);       // keeps the forgot-password lookup up to date (silent)
     return startApp();
   });
 }

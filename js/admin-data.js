@@ -110,7 +110,9 @@ st.textContent = [
 '.dm-field{border-top:1px solid #f0ead8;padding:8px 0}.dm-field:first-child{border-top:0}.dm-key{font-size:11px;color:#9ca3af}',
 '.dm-bar2{height:9px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin:10px 0}.dm-bar2 i{display:block;height:100%;width:0;background:linear-gradient(90deg,#17325c,#2b6ab8);transition:width .25s}',
 '.dm-opt{border:1.5px solid #d8dbe3;border-radius:12px;padding:10px 12px;margin-bottom:8px;display:block;cursor:pointer}.dm-opt.on{border-color:#b23b3b;background:#fff6f6}',
-'.dm-danger{border:1.5px solid #f3c9c9;background:#fff9f9}'
+'.dm-danger{border:1.5px solid #f3c9c9;background:#fff9f9}',
+'.dm-tools{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}@media(min-width:700px){.dm-tools{grid-template-columns:repeat(5,1fr)}}',
+'.dm-tool{background:#fff;border:1px solid #ebe4cd;border-radius:14px;padding:12px 10px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:2px;color:#1c2330}.dm-tool:hover{border-color:#17325c;box-shadow:0 2px 8px rgba(23,50,92,.1)}.dm-tool span{font-size:22px}.dm-tool b{font-size:13.5px}.dm-tool i{font-style:normal;font-size:11.5px;color:#6b7280}'
 ].join('\n'); document.head.appendChild(st); })();
 function sheet(html){ var w = document.createElement('div'); w.id = 'dmOv'; w.className = 'dm-ov dm'; w.innerHTML = '<div class="dm-sheet">' + html + '</div>'; document.body.appendChild(w); return w; }
 function closeSheet(){ var w = $('dmOv'); if(w) w.remove(); }
@@ -161,8 +163,15 @@ function render(){
   API = window.__acApi; var m = main(); if(!m) return;
   if(!OWNER){ m.innerHTML = '<div class="dm"><div class="dm-card"><b>🔒 Owner only</b><div class="dm-sub">The Data Manager can change or delete anything in the database, so only the Owner login can open it.</div></div></div>'; return; }
   if(S.view === 'model') return renderModel();
-  var h = '<div class="dm"><div class="dm-card"><div class="dm-flex" style="flex-wrap:nowrap"><div class="dm-ic">🗄</div><div class="dm-grow"><div style="font-size:19px;font-weight:700">Data Manager</div><div class="dm-sub">See and manage everything stored in the cloud database, in plain words. Pick a topic below to look at it, fix a value, add or delete records, or back everything up.</div></div></div></div>' +
-    '<div class="dm-flex" style="margin-bottom:12px"><input class="dm-in" id="dmFind" placeholder="🔍 Find a topic (orders, dealers, stock…)" style="flex:1;min-width:200px"><button class="dm-btn ghost" id="dmBackup">💾 Backup everything</button><button class="dm-btn ghost" id="dmRestore">⬆ Restore from backup</button></div>';
+  var h = '<div class="dm"><div class="dm-card"><div class="dm-flex" style="flex-wrap:nowrap"><div class="dm-ic">🗄</div><div class="dm-grow"><div style="font-size:19px;font-weight:700">Data</div><div class="dm-sub">Everything about your data is here: look at it, fix it, back it up, restore it, check access, or start fresh. Shop settings are in Configuration.</div></div></div></div>' +
+    '<div class="dm-tools">' +
+      '<button type="button" class="dm-tool" id="dmBackup"><span>💾</span><b>Backup</b><i>Download everything</i></button>' +
+      '<button type="button" class="dm-tool" id="dmRestore"><span>⬆</span><b>Restore</b><i>From a backup file</i></button>' +
+      '<button type="button" class="dm-tool" id="dmCloud"><span>☁</span><b>Cloud sync</b><i>Publish / import old data</i></button>' +
+      '<button type="button" class="dm-tool" id="dmCheck"><span>🛡</span><b>Check access</b><i>Find blocked collections</i></button>' +
+      '<button type="button" class="dm-tool" id="dmFree"><span>📞</span><b>Free a phone</b><i>Let a deleted dealer register again</i></button>' +
+    '</div>' +
+    '<div class="dm-flex" style="margin-bottom:12px"><input class="dm-in" id="dmFind" placeholder="🔍 Find a topic (orders, dealers, stock…)" style="flex:1;min-width:200px"></div>';
   var q = ($('dmFind') ? $('dmFind').value : '').toLowerCase();
   GROUPS.forEach(function(g){
     var list = g[1].filter(function(mm){ return !q || (mm.title + ' ' + mm.desc + ' ' + mm.id).toLowerCase().indexOf(q) >= 0; });
@@ -177,6 +186,7 @@ function render(){
   $('dmFind').oninput = function(){ var v = $('dmFind').value, p = $('dmFind').selectionStart; render(); var f = $('dmFind'); f.value = v; f.focus(); try{ f.setSelectionRange(p, p); }catch(e){} };
   $('dmFind').value = q;
   $('dmBackup').onclick = backupAll; $('dmRestore').onclick = restoreFlow; $('dmReset').onclick = function(){ openReset(); };
+  $('dmCloud').onclick = function(){ if(CLOUD.openAdminPanel) CLOUD.openAdminPanel(); }; $('dmCheck').onclick = accessCheck; $('dmFree').onclick = freePhoneSheet;
   // counts load in the background, one by one (cheap aggregate queries)
   GROUPS.forEach(function(g){ g[1].forEach(function(mm){
     if(S.cReq[mm.id]) return; S.cReq[mm.id] = 1;
@@ -243,11 +253,62 @@ function deleteSelected(){
 /* deleting a login record must also free its login ID (otherwise “already exists” comes back) */
 function cleanLookup(coll, docs){
   var refs = [];
+  if(coll === 'dealers'){
+    docs.forEach(function(d){ refs.push(db().collection('login_index').doc('gst_' + d.id)); });
+    var phs = docs.map(function(d){ return normPh(d.data().accountKey || d.data().phone); });
+    return deleteDocs(refs).catch(function(){}).then(function(){ return releasePhonesIfEmpty(phs); });
+  }
   docs.forEach(function(d){ var u = d.data().username; if(!u) return; u = String(u).toLowerCase();
     if(coll === 'dist_logins') refs.push(db().collection('login_index').doc(u)); if(coll === 'admins') refs.push(db().collection('login_index').doc('staff_' + u)); });
   return refs.length ? deleteDocs(refs).catch(function(){}) : Promise.resolve();
 }
 function logAudit(a, d){ try{ API.logAudit(a, d); }catch(e){} }
+
+/* A deleted dealer's sign-in account stays in Firebase Authentication (a website cannot remove it). To let the same phone number register again
+   with ANY password, the login is moved on to its next "generation" (dealer_<phone>); the old sign-in simply stops being used. */
+function normPh(x){ return String(x || '').replace(/\D/g, ''); }
+function bumpPhone(ph){
+  return db().collection('login_index').doc('dealer_' + ph).get().then(function(d){ var g = d.exists ? Number(d.data().gen) || 0 : 0; return db().collection('login_index').doc('dealer_' + ph).set({ gen: g + 1, at: Date.now(), released: true }); })
+    .then(function(){ return db().collection('accounts').doc(ph).delete().catch(function(){}); });
+}
+function releasePhonesIfEmpty(phones){
+  var list = phones.filter(function(x, i, a){ return x && a.indexOf(x) === i; });
+  return list.reduce(function(p, ph){ return p.then(function(){
+    return db().collection('dealers').where('accountKey', '==', ph).limit(1).get().then(function(s){ if(s.empty) return bumpPhone(ph); });
+  }).catch(function(){}); }, Promise.resolve());
+}
+function freePhoneSheet(){
+  var w = sheet('<h3 class="dm-h">📞 Free a phone number</h3><div class="dm-sub">Use this when a dealer was deleted but cannot register again with the same phone number. All his businesses must already be deleted. His old login is retired and the number can register with any password.</div>' +
+    '<label class="dm-lab">Phone number</label><input class="dm-in" id="fpNum" type="tel" inputmode="numeric" maxlength="10"><div class="dm-err" id="fpMsg" style="font-size:12.5px;margin-top:8px"></div>' +
+    '<div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn ghost" id="fpNo">Close</button><button class="dm-btn" id="fpGo">Free this number</button></div>');
+  $('fpNo').onclick = closeSheet;
+  $('fpGo').onclick = function(){
+    var ph = normPh($('fpNum').value), m = $('fpMsg'); m.style.color = '#b23b3b'; m.textContent = '';
+    if(!/^[0-9]{10}$/.test(ph)){ m.textContent = 'Enter the 10-digit phone number.'; return; }
+    $('fpGo').disabled = true;
+    db().collection('dealers').where('accountKey', '==', ph).get().then(function(sn){
+      if(!sn.empty){ m.textContent = 'This number still has ' + sn.size + ' business(es): ' + sn.docs.map(function(d){ return d.data().business || d.id; }).join(', ') + '. Delete them first.'; $('fpGo').disabled = false; return; }
+      return bumpPhone(ph).then(function(){ logAudit('Phone freed', ph); m.style.color = '#1e7b46'; m.textContent = '✔ Done. This number can register again.'; $('fpGo').disabled = false; });
+    }).catch(function(e){ m.textContent = friendly(e).message || 'Could not free the number.'; $('fpGo').disabled = false; });
+  };
+}
+/* read every collection once and show which ones this login is blocked from — the quickest way to find a rules problem */
+function accessCheck(){
+  var pg = progress('Checking access…'), rows = [];
+  var ids = []; GROUPS.forEach(function(g){ g[1].forEach(function(mm){ if(!mm.fixed && !mm.noList) ids.push(mm.id); }); });
+  var chain = ids.reduce(function(p, id, i){ return p.then(function(){
+    pg.set('Checking ' + MODELS[id].title + '…', 5 + 90 * i / ids.length);
+    return db().collection(id).limit(1).get().then(function(){ rows.push([MODELS[id].title, id, true]); }, function(e){ rows.push([MODELS[id].title, id, false, e && e.code]); });
+  }); }, Promise.resolve());
+  chain.then(function(){
+    var bad = rows.filter(function(r){ return !r[2]; });
+    pg.set(bad.length ? bad.length + ' blocked' : 'All good', 100);
+    pg.body(rows.map(function(r){ return '<div class="dm-flex" style="justify-content:space-between;border-top:1px solid #f0ead8;padding:6px 0"><span>' + esc(r[0]) + ' <span class="dm-sub">' + esc(r[1]) + '</span></span><b style="color:' + (r[2] ? '#1e7b46' : '#b23b3b') + '">' + (r[2] ? '✔ OK' : '✖ ' + esc(r[3] || 'error')) + '</b></div>'; }).join('') +
+      (bad.length ? '<div class="dm-sub" style="color:#b23b3b;margin-top:10px">Some collections are blocked. Publish the latest rules: <code>firebase deploy --only firestore:rules</code> (and refresh this page).</div>' : '<div class="dm-sub" style="color:#1e7b46;margin-top:10px">Every collection can be read. Nothing is blocked.</div>') +
+      '<div class="dm-flex" style="justify-content:flex-end;margin-top:12px"><button class="dm-btn" id="acClose">Close</button></div>');
+    $('acClose').onclick = closeSheet;
+  });
+}
 
 /* ================================================================== the record editor (friendly form + raw JSON) */
 function typeOf(v){ if(v === null || v === undefined) return 'null'; if(isTs(v)) return 'timestamp'; if(isSpecial(v)) return 'kept'; if(typeof v === 'boolean') return 'boolean'; if(typeof v === 'number') return 'number'; if(typeof v === 'string') return 'string'; return 'json'; }
@@ -357,7 +418,7 @@ function restoreFlow(){ importFlow(null); }
 /* ================================================================== delete data / factory reset */
 var RG = [
   { id: 'orders', label: '🧾 Orders', desc: 'All dealer orders, “notify me” requests, invoice counter back to 1.', colls: ['orders', 'stock_notify'], extra: ['invoice'] },
-  { id: 'dealers', label: '🏢 Dealers', desc: 'Dealer profiles and their login links. (Their sign-in accounts remain in Firebase Authentication.)', colls: ['dealers', 'accounts', 'reset_requests'] },
+  { id: 'dealers', label: '🏢 Dealers', desc: 'Dealer profiles and their login links. (Their sign-in accounts remain in Firebase Authentication.)', colls: ['dealers', 'accounts'] },
   { id: 'catalogue', label: '📦 Catalogue', desc: 'Products, catalog cards, categories, offers, banners, calculator rules, broadcasts.', colls: ['products', 'spec_groups', 'catalog_categories', 'catalog_subcategories', 'offers', 'banners', 'calc_rules', 'broadcasts', 'stock_totals'] },
   { id: 'distributors', label: '🚚 Distributors', desc: 'Distributors, their stock, sales, orders, history, requests, logins and roles.', colls: ['distributors', 'distributor_stock', 'distributor_requests', 'distributor_log', 'distributor_sales', 'distributor_orders', 'dist_logins', 'roles'], extra: ['login_index_dist'] },
   { id: 'audit', label: '📜 Old audit log entries', desc: 'Leftover entries from before the audit log was removed.', colls: ['audit_log'] },
@@ -409,7 +470,8 @@ function runReset(plan, wantBackup){
   if(plan.only){ colls = [plan.only]; title = MODELS[plan.only].title; }
   else { plan.groups.forEach(function(g){ g.colls.forEach(function(c){ if(colls.indexOf(c) < 0) colls.push(c); }); (g.extra || []).forEach(function(x){ extra.push(x); }); }); title = plan.groups.map(function(g){ return g.label.replace(/^\S+\s/, ''); }).join(', '); }
   var pg = progress('Deleting data…'), report = [], total = 0, failed = [], idxNames = [];
-  var step = Promise.resolve();
+  var step = Promise.resolve(), relPhones = [], relGsts = [];
+  if(colls.indexOf('dealers') >= 0 || colls.indexOf('accounts') >= 0){ step = step.then(function(){ return Promise.all([fetchAll('accounts').catch(function(){ return []; }), fetchAll('dealers').catch(function(){ return []; })]).then(function(r){ r[0].forEach(function(d){ relPhones.push(normPh(d.id)); }); r[1].forEach(function(d){ relPhones.push(normPh(d.data().accountKey || d.data().phone)); relGsts.push(d.id); }); }); }); }
   // login IDs of distributors / team members must be freed too, so the same name can be used again. They are collected BEFORE the records go.
   var delLogins = colls.indexOf('dist_logins') >= 0, delDists = colls.indexOf('distributors') >= 0;
   if(delLogins){ step = step.then(function(){ return Promise.all([fetchAll('dist_logins').catch(function(){ return []; }), delDists ? fetchAll('distributors').catch(function(){ return []; }) : Promise.resolve([])]).then(function(r){ r[0].concat(r[1]).forEach(function(d){ var u = d.data().username; if(u) idxNames.push(String(u).toLowerCase()); }); }); }); }
@@ -425,6 +487,7 @@ function runReset(plan, wantBackup){
       if(x === 'staff') return db().collection('admins').get().then(function(s){ var refs = [], names = []; s.docs.forEach(function(d){ var r = d.data().role; if(d.id !== CLOUD.uid && (r === 'manager' || r === 'viewer')){ refs.push(d.ref); if(d.data().username) names.push(String(d.data().username).toLowerCase()); } }); names.forEach(function(n){ refs.push(db().collection('login_index').doc('staff_' + n)); }); return deleteDocs(refs).then(function(n){ total += n; report.push(['Staff logins', n]); }); }, function(e){ failed.push('Staff: ' + e.message); });
     });
   });
+  step = step.then(function(){ if(!relPhones.length && !relGsts.length) return; pg.set('Freeing dealer phone numbers…', 93); return deleteDocs(relGsts.map(function(g){ return db().collection('login_index').doc('gst_' + g); })).catch(function(){}).then(function(){ var seen = {}; return relPhones.filter(function(x){ if(!x || seen[x]) return false; seen[x] = 1; return true; }).reduce(function(p, ph){ return p.then(function(){ return bumpPhone(ph); }).catch(function(){}); }, Promise.resolve()); }); });
   step = step.then(function(){ if(!idxNames.length) return; pg.set('Freeing login IDs…', 94); var seen = {}, refs = []; idxNames.forEach(function(n){ if(!seen[n]){ seen[n] = 1; refs.push(db().collection('login_index').doc(n)); } }); return deleteDocs(refs).then(function(n){ report.push(['Login IDs freed', n]); }, function(e){ failed.push('Login IDs: ' + e.message); }); });
   step.then(function(){
     // browser copies of the data are stale now
