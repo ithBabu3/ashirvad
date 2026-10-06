@@ -66,10 +66,10 @@ function renderSync(){
 window.addEventListener('online', renderSync); window.addEventListener('offline', renderSync);
 function setPending(k, snap){ pendingFlags[k] = !!(snap && snap.metadata && snap.metadata.hasPendingWrites); renderSync(); }
 /* a write is queued immediately; its promise only settles when the server answers (possibly much later when offline) */
-function commitBatch(batch, okMsg){
+function commitBatch(batch, okMsg, onFail){
   queued++; renderSync();
   batch.commit().then(function(){ queued--; renderSync(); }, function(ex){
-    queued--; renderSync();
+    queued--; renderSync(); if(onFail){ try{ onFail(ex); }catch(e){} }
     toast('⚠ A change could not be saved: ' + (ex && ex.code === 'permission-denied' ? 'not allowed (stock may be too low, an item was hidden, or you lack permission)' : ((ex && ex.message) || ex)));
   });
   toast(navigator.onLine === false ? '✔ Saved on this phone — will sync when online' : okMsg);
@@ -264,16 +264,21 @@ function refreshRow(id){
 function setQty(id, v){ var it = itemById(id); if(!it) return; v = Math.max(0, Math.floor(Number(v) || 0)); if(v === (Number(it.qty) || 0)) delete dirty[id]; else dirty[id] = v; }
 function saveAll(){
   var ids = Object.keys(dirty); if(!ids.length) return;
-  var now = Date.now(), batch = db.batch(), n = 0;
+  var now = Date.now(), batch = db.batch(), n = 0, sent = {};
   ids.forEach(function(id){
     var it = itemById(id); if(!it){ delete dirty[id]; return; }
-    var to = Math.max(0, Math.floor(Number(dirty[id]) || 0)), from = Number(it.qty) || 0;
+    var to = Math.max(0, Math.floor(Number(dirty[id]) || 0)), from = Number(it.qty) || 0; sent[id] = to;
     batch.update(db.collection('distributor_stock').doc(id), { qty: to, updatedAt: now, updatedBy: loginId });
     batch.set(db.collection('distributor_log').doc(), logRow(it, from, to, now));
     setTotal(batch, it, to, now); n++;
   });
   if(!n){ dirty = {}; render(); return; }
-  hist = null; dirty = {}; commitBatch(batch, '✔ Stock saved'); render();
+  hist = null; dirty = {};
+  commitBatch(batch, '✔ Stock saved', function(){          // refused: put the unsaved numbers back so nothing the user typed is lost
+    Object.keys(sent).forEach(function(id){ var it = itemById(id); if(it && dirty[id] === undefined && (Number(it.qty) || 0) !== sent[id]) dirty[id] = sent[id]; });
+    softRender();
+  });
+  render();
 }
 function receiveStock(id){
   var it = itemById(id); if(!it) return;
@@ -371,6 +376,7 @@ function openSale(preId){
   $('sxCust').value = saleMeta.customer; $('sxNote').value = saleMeta.note;
   function row(it, btn){ return '<div class="r"><div class="grow"><div class="nm" style="font-size:14px;font-weight:650">' + esc(it.name) + (it.size ? ' <span style="font-weight:500;color:#4b5563">— ' + esc(it.size) + '</span>' : '') + '</div><div class="sub">' + esc(it.part) + ' · in stock <b>' + (Number(it.qty) || 0) + '</b></div></div>' + btn + '</div>'; }
   function paint(){
+    var before = saleLines.length; saleLines = saleLines.filter(function(l){ return itemById(l.id); }); if(saleLines.length !== before) saveDrafts();   // an item that was hidden meanwhile
     var q = qs.toLowerCase().trim(), taken = {}; saleLines.forEach(function(l){ taken[l.id] = 1; });
     var list = (q ? items.filter(function(it){ return (Number(it.qty) || 0) > 0 && (it.name + ' ' + (it.size || '') + ' ' + it.part).toLowerCase().indexOf(q) >= 0; }) : topSold()).filter(function(it){ return !taken[it.id]; }).slice(0, q ? 15 : 6);
     $('sxRes').innerHTML = list.length ? '<div class="sub" style="margin-top:8px">' + (q ? 'Results' : 'Quick add') + '</div><div class="res">' + list.map(function(it){ return row(it, '<button class="btn gold sm" type="button" data-add="' + esc(it.id) + '">＋ Add</button>'); }).join('') + '</div>' : (q ? '<div class="sub" style="margin-top:8px">No match with stock.</div>' : '');
@@ -428,9 +434,11 @@ function recordSale(){
   saleLines = []; saleMeta = { customer: '', note: '' }; saveDrafts(); hist = null; sPeriod = sPeriod === 'today' ? 'today' : sPeriod;
   commitBatch(b, '✔ Sale ' + no + ' recorded — ' + units + ' units, stock reduced'); render(); return true;
 }
+var VOIDING = {};
 function voidSale(id){
-  var s = salesList.filter(function(x){ return x.id === id; })[0]; if(!s || s.status === 'void') return;
+  var s = salesList.filter(function(x){ return x.id === id; })[0]; if(!s || s.status === 'void' || VOIDING[id]) return;
   if(!confirm('Void sale ' + (s.no || '') + '? The sold quantities go back into your stock.')) return;
+  VOIDING[id] = 1;                       // a second tap before the first is confirmed must not give the stock back twice
   var now = Date.now(), b = db.batch(), skipped = 0;
   b.update(db.collection('distributor_sales').doc(id), { status: 'void', voidedAt: now, voidedBy: loginId });
   (s.lines || []).forEach(function(l){
@@ -440,7 +448,7 @@ function voidSale(id){
     b.set(db.collection('distributor_log').doc(), logRow(it, Number(it.qty) || 0, (Number(it.qty) || 0) + q, now, 'void', s.no || ''));
     setTotal(b, it, FV.increment(q), now);
   });
-  hist = null; commitBatch(b, '✔ Sale voided — stock restored' + (skipped ? ' (' + skipped + ' hidden item(s) not restored)' : ''));
+  hist = null; commitBatch(b, '✔ Sale voided — stock restored' + (skipped ? ' (' + skipped + ' hidden item(s) not restored)' : ''), function(){ delete VOIDING[id]; });
 }
 
 /* ================================================================== ORDERS (purchase orders to the company) */
@@ -467,6 +475,7 @@ function openOrder(){
     '<textarea class="inp" id="oxNote" rows="2" placeholder="Note to the company (optional)" style="margin-top:10px"></textarea><div class="tot"><span>Total</span><span id="oxTot"></span></div><div class="row"><button class="btn ghost" id="oxClear" type="button">Clear</button><button class="btn gold grow" id="oxSend" type="button" style="font-size:16px">📨 Place order</button></div>', true);
   var qs = ''; $('oxNote').value = orderNote;
   function paint(){
+    var before = cart.length; cart = cart.filter(function(c){ return itemById(c.id); }); if(cart.length !== before) saveDrafts();   // an item that was hidden meanwhile
     var q = qs.toLowerCase().trim(), taken = {}; cart.forEach(function(c){ taken[c.id] = 1; });
     var list = items.filter(function(it){ return !taken[it.id] && (!q ? statusOf(Number(it.qty) || 0) !== 'ok' : (it.name + ' ' + (it.size || '') + ' ' + it.part).toLowerCase().indexOf(q) >= 0); }).slice(0, q ? 15 : 6);
     $('oxRes').innerHTML = list.length ? '<div class="sub" style="margin-top:8px">' + (q ? 'Results' : 'Running low') + '</div><div class="res">' + list.map(function(it){ return '<div class="r"><div class="grow"><div class="nm" style="font-size:14px;font-weight:650">' + esc(it.name) + (it.size ? ' <span style="font-weight:500;color:#4b5563">— ' + esc(it.size) + '</span>' : '') + '</div><div class="sub">' + esc(it.part) + ' · you have <b>' + (Number(it.qty) || 0) + '</b></div></div><button class="btn gold sm" type="button" data-oadd="' + esc(it.id) + '">＋ Add</button></div>'; }).join('') + '</div>' : '';

@@ -1130,14 +1130,19 @@ function sendBroadcast(en){
     date:new Date().toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) });
   saveBroadcasts(BROADCASTS);
 }
+/* "already told the dealer" memory — kept in this browser, so a notice is shown once and not again on every login / reload */
+var NOTIFIED = {};
+function notifySeenGet(name){ try{ var l = JSON.parse(localStorage.getItem('ac_seen_' + name + '_' + session) || '[]'); return Array.isArray(l) ? l : []; }catch(e){ return []; } }
+function notifySeenAdd(name, ids){ try{ var l = notifySeenGet(name); ids.forEach(function(i){ if(l.indexOf(i) < 0) l.push(i); }); localStorage.setItem('ac_seen_' + name + '_' + session, JSON.stringify(l.slice(-200))); }catch(e){} }
 function checkBroadcastNotifications(){
   if(!session || BROADCASTS.length === 0) return;
   var users = getUsers();
   var u = users[session];
   if(!u) return;
-  var lastSeen = Number(u.lastSeenBroadcastId) || 0;
   var latest = BROADCASTS[BROADCASTS.length-1];
-  if(latest.id > lastSeen){
+  var lastSeen = Math.max(Number(u.lastSeenBroadcastId) || 0, Math.max.apply(null, [0].concat(notifySeenGet('bc'))));
+  if(latest.id > lastSeen && !NOTIFIED['bc' + latest.id]){
+    NOTIFIED['bc' + latest.id] = 1; notifySeenAdd('bc', [latest.id]);
     showToast('📢 ' + latest.en);
     updateDealerProfile(session, { lastSeenBroadcastId: latest.id });
   }
@@ -1311,8 +1316,10 @@ function checkAndFulfillStockNotify(productId, oldStock, newStock){
 }
 function checkStockNotifications(){
   if(!session) return;
-  var mine = STOCK_NOTIFY.filter(function(r){ return r.gst === session && r.fulfilled && !r.seen; });
+  var doneS = notifySeenGet('stock');
+  var mine = STOCK_NOTIFY.filter(function(r){ return r.gst === session && r.fulfilled && !r.seen && doneS.indexOf(r.productId) < 0 && !NOTIFIED['s' + r.productId]; });
   if(mine.length === 0) return;
+  mine.forEach(function(r){ NOTIFIED['s' + r.productId] = 1; }); notifySeenAdd('stock', mine.map(function(r){ return r.productId; }));
   var names = mine.map(function(r){
     var p = PRODUCTS.find(function(pp){ return pp.id === r.productId; });
     return p ? p.name : ('#'+r.productId);
@@ -1510,8 +1517,7 @@ registerForm.addEventListener('submit', function(e){
 /* ================= Forgot password (admin approves) + duplicate-registration guard =================
    • Registration is refused when the GST number is already registered, or when the same phone number already has a
      business with the same address (same dealer registering twice).
-   • Forgot password: the dealer enters phone + GST + address, the admin sees whether they match the registered profile and
-     approves or rejects; once approved the dealer chooses a new password on the same screen. */
+   • Forgot password: the dealer enters phone + GST + address; when they match the registered profile he sets a new password himself. */
 var DUP_MSG = 'This business is already registered (same phone number and address). Please log in — or use “Forgot password?” if you cannot remember the password.';
 function normAddr(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function sameAddr(a, b){ var x = normAddr(a), y = normAddr(b); return !!x && x === y; }
@@ -1523,160 +1529,46 @@ function resetMatch(req){
   return sameAddr(u.address, req.address) || sameAddr(u.deliveryAddress, req.address) || (u.addresses || []).some(function(a){ return sameAddr(a.text, req.address); });
 }
 var RESET = {
-  list_: function(){ try{ var l = JSON.parse(localStorage.getItem('ac_reset_requests') || '[]'); return Array.isArray(l) ? l : []; }catch(e){ return []; } },
-  save_: function(l){ localStorage.setItem('ac_reset_requests', JSON.stringify(l)); },
-  sent: function(){ try{ return JSON.parse(localStorage.getItem('ac_reset_sent') || 'null'); }catch(e){ return null; } },
-  setSent: function(o){ try{ if(o) localStorage.setItem('ac_reset_sent', JSON.stringify(o)); else localStorage.removeItem('ac_reset_sent'); }catch(e){} },
-  request: function(req){
-    if(CLOUD) return CLOUD.resetRequest(req);
-    var l = RESET.list_(), ph = normalizePhone(req.phone), cur = l.find(function(r){ return r.phone === ph; });
-    if(cur && (cur.status === 'pending' || cur.status === 'approved')){ var e = new Error('A request for this phone number is already open. Please wait for the admin, or check its status.'); e.code = 'ac/reset-exists'; return Promise.reject(e); }
-    var at = Date.now();
-    l = l.filter(function(r){ return r.phone !== ph; }); l.push({ id: ph, phone: ph, gst: req.gst, address: req.address, status: 'pending', at: at }); RESET.save_(l);
-    return Promise.resolve({ at: at });
-  },
-  status: function(phone, at){
-    if(CLOUD) return CLOUD.resetStatus(phone, at);
-    var r = RESET.list_().find(function(x){ return x.phone === normalizePhone(phone) && Number(x.at) === Number(at); });
-    return Promise.resolve({ status: r ? r.status : 'pending' });
-  },
-  complete: function(phone, pw){
-    if(CLOUD) return CLOUD.resetComplete(phone, pw);
-    var ph = normalizePhone(phone), l = RESET.list_(), r = l.find(function(x){ return x.phone === ph && x.status === 'approved'; });
-    if(!r){ var e = new Error('This reset is not approved, or it was already used.'); e.code = 'ac/reset-closed'; return Promise.reject(e); }
-    var accs = getAccounts(); if(accs[ph]){ accs[ph].password = pw; saveAccounts(accs); }
-    var users = getUsers(); Object.keys(users).forEach(function(g){ if(normalizePhone(users[g].phone) === ph || users[g].accountKey === ph) users[g].password = pw; }); saveUsers(users);
-    r.status = 'used'; RESET.save_(l);
-    return Promise.resolve();
-  },
-  list: function(){ return CLOUD ? CLOUD.resetList() : Promise.resolve(RESET.list_()); },
-  decide: function(req, approve){
-    if(CLOUD) return CLOUD.resetDecide(req, approve);
-    var l = RESET.list_(), r = l.find(function(x){ return x.phone === req.phone; });
-    if(r){ r.status = approve ? 'approved' : 'rejected'; r.decidedAt = Date.now(); RESET.save_(l); }
+  /* verifies phone + GST + address against the saved profile and sets the new password (no admin needed) */
+  run: function(req){
+    if(CLOUD) return CLOUD.resetPassword(req);
+    if(!resetMatch(req)){ var e = new Error('nomatch'); e.code = 'ac/no-match'; return Promise.reject(e); }
+    var ph = normalizePhone(req.phone), accs = getAccounts();
+    if(accs[ph]){ accs[ph].password = req.password; saveAccounts(accs); }
+    var users = getUsers(); Object.keys(users).forEach(function(g){ if(normalizePhone(users[g].phone) === ph || users[g].accountKey === ph) users[g].password = req.password; }); saveUsers(users);
     return Promise.resolve();
   }
 };
 function openForgotPassword(){
-  var sent = RESET.sent();
-  var w = paySheet('<div id="fpBody"></div>');
-  var body = w.querySelector('#fpBody'), $f = function(id){ return body.querySelector('#' + id); };
-  var head = function(sub){ return '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🔑 Forgot password</h3><div class="sub">' + sub + '</div></div><button type="button" class="acpay-btn ghost" id="fpX" style="flex:none;padding:6px 12px">✕</button></div>'; };
-  var wireX = function(){ $f('fpX').onclick = paySheetClose; };
-  var pwBox = function(id, label){ return '<label class="l">' + label + '</label><input id="' + id + '" type="password" autocomplete="new-password">'; };
-  function formPane(pre){
-    pre = pre || {};
-    body.innerHTML = head('Enter your details exactly as you registered. The admin checks them and approves your request — then you can choose a new password here.') +
-      '<label class="l">Registered phone number</label><input id="fpPhone" type="tel" inputmode="numeric" maxlength="10" value="' + esc(pre.phone || '') + '">' +
-      '<label class="l">GST number</label><input id="fpGst" autocapitalize="characters" autocomplete="off" value="' + esc(pre.gst || '') + '">' +
-      '<label class="l">Registered business address</label><textarea id="fpAddr" rows="2">' + esc(pre.address || '') + '</textarea>' +
-      '<div class="acpay-err" id="fpErr"></div>' +
-      '<div class="acpay-row"><button type="button" class="acpay-btn green" id="fpSend">Send request to admin</button></div>' +
-      '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="fpHave">I already sent a request — check status</button></div>';
-    wireX();
-    $f('fpHave').onclick = function(){ var sd = RESET.sent(); if(sd) statusPane(sd); else { $f('fpErr').textContent = 'No request was sent from this device. Send one first.'; } };
-    $f('fpSend').onclick = function(){
-      var btn = $f('fpSend'), err = $f('fpErr'); err.textContent = '';
-      if(btn.disabled) return;
-      var req = { phone: $f('fpPhone').value.trim(), gst: $f('fpGst').value.trim().toUpperCase(), address: $f('fpAddr').value.trim() };
-      if(!/^[0-9]{10}$/.test(req.phone)){ err.textContent = t('auth.err.phoneInvalid'); return; }
-      if(!req.gst || req.address.length < 6){ err.textContent = 'Please fill in your GST number and registered address.'; return; }
-      if(!CLOUD && !resetMatch(req)){ err.textContent = 'These details do not match any registered dealer. Check the phone number, GST number and address exactly as you registered.'; return; }
-      btn.disabled = true;
-      RESET.request(req).then(function(res){
-        RESET.setSent({ phone: req.phone, at: res.at }); statusPane({ phone: req.phone, at: res.at }, 'Request sent ✔ — the admin will review it.');
-      }).catch(function(e){ err.textContent = (e && e.message) || 'Could not send the request. Please try again.'; btn.disabled = false; });
-    };
-  }
-  function statusPane(sd, note){
-    body.innerHTML = head('Request for ' + esc(sd.phone)) + '<div class="pay-block" id="fpState" style="margin-top:12px">' + esc(note || 'Checking…') + '</div><div class="acpay-err" id="fpErr"></div>' +
-      '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="fpAgain">↻ Check status</button><button type="button" class="acpay-btn ghost" id="fpNew">Send a new request</button></div>';
-    wireX();
-    $f('fpNew').onclick = function(){ formPane({ phone: sd.phone }); };
-    var check = function(){
-      var box = $f('fpState'); box.textContent = 'Checking…';
-      RESET.status(sd.phone, sd.at).then(function(r){
-        if(r.status === 'approved') return newPwPane(sd);
-        if(r.status === 'used'){ RESET.setSent(null); box.textContent = 'This reset was already used. Please log in with your new password.'; return; }
-        if(r.status === 'rejected'){ box.innerHTML = '❌ <b>Request rejected.</b> The admin could not verify your details. You can send a new request with the correct details.'; return; }
-        box.innerHTML = '⏳ <b>Waiting for admin approval.</b> Check again in a little while.';
-      }).catch(function(e){ box.textContent = 'Could not check right now — ' + ((e && e.message) || 'please try again.'); });
-    };
-    $f('fpAgain').onclick = check; check();
-  }
-  function newPwPane(sd){
-    body.innerHTML = head('✔ Approved — choose your new password.') + pwBox('fpPw', 'New password (min 6 characters)') + pwBox('fpPw2', 'Confirm new password') +
-      '<div class="acpay-err" id="fpErr"></div><div class="acpay-row"><button type="button" class="acpay-btn green" id="fpSet">Set new password</button></div>';
-    wireX();
-    $f('fpSet').onclick = function(){
-      var btn = $f('fpSet'), err = $f('fpErr'), a = $f('fpPw').value, b = $f('fpPw2').value; err.textContent = '';
-      if(btn.disabled) return;
-      if(a.length < 6){ err.textContent = 'Password must be at least 6 characters.'; return; }
-      if(a !== b){ err.textContent = t('auth.err.passwordMismatch'); return; }
-      btn.disabled = true;
-      RESET.complete(sd.phone, a).then(function(){
-        RESET.setSent(null); paySheetClose(); showToast('Password changed — please log in');
-        var lp = document.getElementById('loginPhone'); if(lp){ lp.value = sd.phone; var lw = document.getElementById('loginPassword'); if(lw){ lw.value = ''; lw.focus(); } }
-      }).catch(function(e){ err.textContent = e && e.code === 'auth/email-already-in-use' ? 'This reset was already used. Please log in.' : ((e && e.message) || 'Could not set the password.'); btn.disabled = false; });
-    };
-  }
-  if(sent && sent.phone) statusPane(sent); else formPane();
+  var w = paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🔑 Forgot password</h3><div class="sub">Enter the details exactly as you registered. If they match, you can set a new password right away.</div></div><button type="button" class="acpay-btn ghost" id="fpX" style="flex:none;padding:6px 12px">✕</button></div>' +
+    '<label class="l">Registered phone number</label><input id="fpPhone" type="tel" inputmode="numeric" maxlength="10" autocomplete="off">' +
+    '<label class="l">GST number</label><input id="fpGst" autocapitalize="characters" autocomplete="off">' +
+    '<label class="l">Registered business address</label><textarea id="fpAddr" rows="2"></textarea>' +
+    '<label class="l">New password (min 6 characters)</label><input id="fpPw" type="password" autocomplete="new-password">' +
+    '<label class="l">Confirm new password</label><input id="fpPw2" type="password" autocomplete="new-password">' +
+    '<div class="acpay-err" id="fpErr"></div>' +
+    '<div class="acpay-row"><button type="button" class="acpay-btn green" id="fpGo">Reset password</button></div>');
+  var $f = function(id){ return w.querySelector('#' + id); };
+  $f('fpX').onclick = paySheetClose;
+  $f('fpGo').onclick = function(){
+    var btn = $f('fpGo'), err = $f('fpErr'); err.textContent = '';
+    if(btn.disabled) return;
+    var req = { phone: $f('fpPhone').value.trim(), gst: $f('fpGst').value.trim().toUpperCase(), address: $f('fpAddr').value.trim(), password: $f('fpPw').value };
+    if(!/^[0-9]{10}$/.test(req.phone)){ err.textContent = t('auth.err.phoneInvalid'); return; }
+    if(!req.gst || req.address.length < 6){ err.textContent = 'Please fill in your GST number and registered address.'; return; }
+    if(req.password.length < 6){ err.textContent = 'Password must be at least 6 characters.'; return; }
+    if(req.password !== $f('fpPw2').value){ err.textContent = t('auth.err.passwordMismatch'); return; }
+    btn.disabled = true; btn.textContent = 'Checking…';
+    RESET.run(req).then(function(){
+      paySheetClose(); showToast('Password changed — please log in');
+      var lp = document.getElementById('loginPhone'); if(lp){ lp.value = req.phone; var lw = document.getElementById('loginPassword'); if(lw){ lw.value = ''; lw.focus(); } }
+    }).catch(function(e){
+      err.textContent = e && e.code === 'ac/no-match' ? 'These details do not match our records. Check the phone number, GST number and address exactly as you registered.' : ((e && e.message) || 'Could not reset the password. Please try again.');
+      btn.disabled = false; btn.textContent = 'Reset password';
+    });
+  };
 }
 document.addEventListener('click', function(e){ var a = e.target.closest ? e.target.closest('#goForgot') : null; if(a){ e.preventDefault(); openForgotPassword(); } });
-
-/* ---- admin: password requests ---- */
-var RESET_PENDING = 0, RESET_LAST_CHECK = 0;
-function updateResetBadge(force){
-  if(!adminSession) return;
-  if(!force && Date.now() - RESET_LAST_CHECK < 30000) return;
-  RESET_LAST_CHECK = Date.now();
-  RESET.list().then(function(l){
-    RESET_PENDING = l.filter(function(r){ return r.status === 'pending'; }).length;
-    var b = document.querySelector('.admin-tabs button[data-atab="customers"]'); if(!b) return;
-    var c = b.querySelector('.tab-count');
-    if(RESET_PENDING > 0){ if(!c){ c = document.createElement('span'); c.className = 'tab-count'; b.appendChild(c); } c.textContent = String(RESET_PENDING); b.title = RESET_PENDING + ' password request' + (RESET_PENDING === 1 ? '' : 's') + ' waiting'; }
-    else if(c){ c.remove(); b.removeAttribute('title'); }
-    var rb = document.getElementById('resetReqCount'); if(rb) rb.textContent = RESET_PENDING ? ' (' + RESET_PENDING + ')' : '';
-  }).catch(function(){});
-}
-setInterval(function(){ if(adminSession) updateResetBadge(); }, 60000);
-function openResetRequests(){
-  var w = paySheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🔑 Password requests</h3><div class="sub">Approve only when the details match the registered profile.</div></div><button type="button" class="acpay-btn ghost" id="rrX" style="flex:none;padding:6px 12px">✕</button></div><div id="rrBody" style="margin-top:10px">Loading…</div>');
-  w.querySelector('#rrX').onclick = paySheetClose;
-  var body = w.querySelector('#rrBody');
-  function load(){
-    RESET.list().then(function(list){
-      var users = getUsers(), fmt = function(ts){ return new Date(Number(ts) || 0).toLocaleString('en-IN'); };
-      var pend = list.filter(function(r){ return r.status === 'pending'; }).sort(function(a, b){ return b.at - a.at; });
-      var done = list.filter(function(r){ return r.status !== 'pending'; }).sort(function(a, b){ return b.at - a.at; }).slice(0, 8);
-      RESET_PENDING = pend.length;
-      var row = function(r, actions){
-        var m = resetMatch(r), u = users[String(r.gst || '').trim().toUpperCase()];
-        return '<div class="pay-block" style="margin-top:8px"><div class="pb-row"><b>' + esc(u ? u.business : 'Unknown business') + '</b><span>' + fmt(r.at) + '</span></div>' +
-          '<div class="pb-msg">Phone: <b>' + esc(r.phone) + '</b><br>GST: <b>' + esc(r.gst) + '</b><br>Address given: ' + esc(r.address) + (u && !m ? '<br><span style="color:#6b7280">Registered address: ' + esc(u.address || '—') + '</span>' : '') + '</div>' +
-          '<div style="margin-top:6px">' + (m ? '<span class="pay-chip pay-paid">✔ Matches registered details</span>' : '<span class="pay-chip pay-unpaid">✖ Does not match registered details</span>') + '</div>' + (actions || '') + '</div>';
-      };
-      body.innerHTML = (pend.length ? pend.map(function(r){
-          var m = resetMatch(r);
-          return row(r, '<div class="acpay-row"><button type="button" class="acpay-btn green" data-rr-ok="' + esc(r.phone) + '"' + (m ? '' : ' disabled title="Details do not match"') + '>✔ Approve</button><button type="button" class="acpay-btn red" data-rr-no="' + esc(r.phone) + '">✕ Reject</button></div>');
-        }).join('') : '<div class="sub" style="padding:10px 0">No pending requests.</div>') +
-        (done.length ? '<div style="margin-top:14px"><b>Recent decisions</b>' + done.map(function(r){ return '<div class="oi-line" style="font-size:12.5px"><span>' + esc(r.phone) + ' · ' + esc(r.gst) + '</span><span>' + esc(r.status) + '</span></div>'; }).join('') + '</div>' : '');
-      var pb = document.getElementById('resetReqCount'); if(pb) pb.textContent = pend.length ? ' (' + pend.length + ')' : '';
-      body.querySelectorAll('[data-rr-ok],[data-rr-no]').forEach(function(btn){
-        btn.onclick = function(){
-          var ph = btn.getAttribute('data-rr-ok') || btn.getAttribute('data-rr-no'), ok = btn.hasAttribute('data-rr-ok');
-          var req = list.find(function(r){ return r.phone === ph; }); if(!req || btn.disabled) return;
-          if(ok && !resetMatch(req)){ showToast('Details do not match — cannot approve'); return; }
-          if(!ok && !confirm('Reject this request?')) return;
-          body.querySelectorAll('button').forEach(function(x){ x.disabled = true; });
-          RESET.decide(req, ok).then(function(){ logAudit(ok ? 'Password reset approved' : 'Password reset rejected', ph + ' · ' + req.gst); showToast(ok ? 'Approved — the dealer can now set a new password' : 'Request rejected'); load(); updateResetBadge(true); })
-            .catch(function(e){ showToast('Could not save: ' + ((e && e.message) || 'try again')); load(); });
-        };
-      });
-    }).catch(function(e){ body.textContent = 'Could not load requests: ' + ((e && e.message) || 'try again'); });
-  }
-  load();
-}
 
 function showBusinessSwitcher(gsts, onChoose){
   var users = getUsers();
@@ -2365,16 +2257,14 @@ function renderOfferZoneHtml(){
 }
 (function(){ if(document.getElementById('acRvCss')) return; var st = document.createElement('style'); st.id = 'acRvCss';
   st.textContent = [
-  '.product-grid.rv-strip{display:flex!important;grid-template-columns:none!important;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;scrollbar-width:thin}',
-  '.rv-strip .product-card{flex:0 0 118px;width:118px;height:auto}',
-  '.rv-strip .product-media{height:64px!important}.rv-strip .product-media svg{width:30px;height:30px}',
-  '.rv-strip .product-body{padding:6px 7px 7px;gap:3px}',
-  '.rv-strip .product-name{font-size:11.5px;min-height:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
-  '.rv-strip .product-size,.rv-strip .gst-note,.rv-strip .stock-note,.rv-strip .price-mrp,.rv-strip .off-ribbon{display:none!important}',
-  '.rv-strip .price-final{font-size:13px}',
-  '.rv-strip .btn-add,.rv-strip .btn-notify{margin-top:3px;padding:4px 6px;font-size:11px}',
-  '.rv-strip .qty-stepper{margin-top:3px}.rv-strip .qty-stepper button{height:22px;width:24px;font-size:13px}',
-  '.rv-strip .wish-btn{width:20px;height:20px;font-size:12px;top:4px;left:4px}'
+  '.product-grid.rv-strip{display:flex!important;grid-template-columns:none!important;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:6px;scrollbar-width:thin}',
+  '.rv-strip .product-card{flex:0 0 156px;width:156px;height:auto}',
+  '.rv-strip .product-media{height:96px!important}',
+  '.rv-strip .product-body{padding:8px 9px 9px;gap:4px}',
+  '.rv-strip .product-name{font-size:12.5px;min-height:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+  '.rv-strip .gst-note,.rv-strip .stock-note{display:none!important}',
+  '.rv-strip .price-final{font-size:14.5px}',
+  '.rv-strip .btn-add,.rv-strip .btn-notify{margin-top:4px;padding:6px 8px;font-size:12px}'
   ].join('\n'); document.head.appendChild(st); })();
 function renderRecentlyViewedHtml(){
   var ids = getRecentlyViewed();
@@ -2912,8 +2802,9 @@ function renderOrdersView(){
 }
 function checkDiscountNotifications(){
   if(!session) return;
-  var hasUnseen = getOrders().some(function(o){ return o.discount && !o.discountSeen; });
-  if(hasUnseen) showToast(t('toast.newDiscount'));
+  var done = notifySeenGet('disc');
+  var fresh = getOrders().filter(function(o){ return o.discount && !o.discountSeen && done.indexOf(o.id) < 0 && !NOTIFIED['d' + o.id]; });
+  if(fresh.length){ fresh.forEach(function(o){ NOTIFIED['d' + o.id] = 1; }); notifySeenAdd('disc', fresh.map(function(o){ return o.id; })); showToast(t('toast.newDiscount')); }
 }
 
 function renderWishlistView(){
@@ -3425,7 +3316,7 @@ function adminPayPanelHtml(o){
   var s = payState(o), due = orderPayable(o), paid = orderPaid(o), bal = orderBalance(o), cl = o.payClaim || {}, cur = payStatusForSelect(o);
   var claim = (cl.status === 'pending') ? '<div class="pay-block" style="background:#eef3ff;border-color:#c9d8ff"><b>⏳ Dealer says he paid ' + money(cl.amount) + '</b>' + (cl.via ? ' via ' + esc(cl.via) : '') + '<div class="pb-msg">Reference: <b>' + esc(cl.utr || '—') + '</b> · ' + new Date(cl.at || 0).toLocaleString('en-IN') + (cl.note ? '<br>Note: ' + esc(cl.note) : '') +
     (utrUsedElsewhere(cl.utr, o.id) ? '<br><b style="color:#b23b3b">⚠ This reference number appears on another order.</b>' : '') + '</div>' +
-    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn-admin sm" data-pay-confirm="' + esc(o.id) + '">✔ Confirm received (mark Paid)</button><button type="button" class="btn-admin sm maroon" data-pay-reject="' + esc(o.id) + '">✕ Not received</button></div></div>' : '';
+    '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button type="button" class="btn-admin sm" data-pay-confirm="' + esc(o.id) + '">✔ Confirm ' + money(cl.amount) + ' received</button><button type="button" class="btn-admin sm maroon" data-pay-reject="' + esc(o.id) + '">✕ Not received</button></div></div>' : '';
   return '<div class="pay-block" style="margin:8px 12px" data-pay-oid="' + esc(o.id) + '"><div style="display:flex;justify-content:space-between;align-items:center"><b>💳 Payment</b>' + payChipHtml(o) + '</div>' +
     '<div class="pb-row"><span>Payable</span><b>' + money(due) + '</b></div><div class="pb-row"><span>Received</span><b style="color:#1e7b46">' + money(paid) + '</b></div><div class="pb-row"><span>Balance</span><b style="color:' + (bal > 0 ? '#b23b3b' : '#1e7b46') + '">' + money(bal) + '</b></div>' +
     '<div class="pb-msg">Dealer chose: <b>' + (o.payMode === 'later' ? 'Pay later' : o.payMode === 'now' ? 'Pay now' : '—') + '</b></div>' + claim +
@@ -3465,6 +3356,13 @@ function adminSetPayment(orderId, status, amount, note, actionLabel){
   paySheetClose(); showToast('Payment status saved ✔'); if(adminSession) renderAdminOrders();
   return true;
 }
+/* "Confirm received" on a dealer's payment claim: Paid only when the claimed amount clears the balance, otherwise Part paid */
+function payConfirmClaim(orderId){
+  var o = findOrder(orderId); if(!o || !o.payClaim) return;
+  var due = orderPayable(o), got = r2(orderPaid(o) + (Number(o.payClaim.amount) || 0));
+  if(got >= due - 0.5) return adminSetPayment(orderId, 'paid', 0, '', 'Confirmed received');
+  return adminSetPayment(orderId, 'partial', got, '', 'Confirmed received (part payment)');
+}
 function payRejectClaim(orderId){
   var o = findOrder(orderId); if(!o || !o.payClaim) return;
   var why = prompt('Why was it not received? (shown to the dealer, optional)', 'Not seen in our account yet'); if(why === null) return;
@@ -3489,7 +3387,7 @@ document.addEventListener('click', function(e){
   if((v = t.getAttribute('data-pay-open'))){ e.stopPropagation(); openPaySheet(v); }
   else if((v = t.getAttribute('data-pay-popup'))){ e.stopPropagation(); openAdminPaySheet(v); }
   else if((v = t.getAttribute('data-pay-quick'))){ e.stopPropagation(); adminSetPayment(t.getAttribute('data-pay-for'), v, 0, ''); }
-  else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); adminSetPayment(v, 'paid', 0, '', 'Confirmed received'); }
+  else if((v = t.getAttribute('data-pay-confirm'))){ e.stopPropagation(); payConfirmClaim(v); }
   else if((v = t.getAttribute('data-pay-save'))){
     e.stopPropagation();
     var box = t.closest('[data-pay-oid]'); if(!box) return;
@@ -3690,7 +3588,7 @@ document.addEventListener('click', function(e){
 var QT = { items: [], margin: 0, round: 0, customer: '', phone: '', notes: '', days: 7, gstMode: 'incl', deliveryOn: false, delivery: 0, discOn: false, discType: 'flat', discValue: 0, watermark: false, no: null };
 function qtPrefs(){ try{ return JSON.parse(localStorage.getItem('ac_quote_prefs_' + session) || '{}') || {}; }catch(e){ return {}; } }
 function qtSavePrefs(){ try{ localStorage.setItem('ac_quote_prefs_' + session, JSON.stringify({ round: QT.round, days: QT.days, gstMode: QT.gstMode, notes: QT.notes, watermark: QT.watermark })); }catch(e){} }
-function qtLogo(){ try{ var l = JSON.parse(localStorage.getItem('ac_quote_logo_' + session) || 'null'); return l && l.d && l.w > 0 && l.h > 0 ? l : null; }catch(e){ return null; } }
+function qtLogo(){ try{ var l = JSON.parse(localStorage.getItem('ac_quote_logo_' + session) || 'null'); return l && /^data:image\/(png|jpeg);base64,/.test(String(l.d || '')) && l.w > 0 && l.h > 0 ? l : null; }catch(e){ return null; } }
 function qtSaveLogo(l){ try{ if(l) localStorage.setItem('ac_quote_logo_' + session, JSON.stringify(l)); else localStorage.removeItem('ac_quote_logo_' + session); return true; }catch(e){ return false; } }
 function qtNum(v){ var n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
 function qtProd(id){ return PRODUCTS.find(function(x){ return x.id === id; }); }
@@ -3797,6 +3695,13 @@ function qtWrap(doc, text, w){                       /* wraps at spaces, and bre
   });
   return out;
 }
+/* letters the PDF font cannot print (Tamil, Hindi …) would silently disappear — tell the dealer */
+function qtLossy(){
+  var u = (getUsers()[session] || {}), parts = [QT.customer, QT.notes, u.business, u.address];
+  QT.items.forEach(function(it){ var p = qtProd(it.id); if(p) parts.push(p.name, p.size); });
+  var keep = function(x){ return String(x == null ? '' : x).replace(/[\u2018\u2019\u201C\u201D\u2013\u2014\u20B9\u00A0]/g, ' ').replace(/\s/g, ''); };
+  return parts.some(function(x){ return keep(x) !== keep(qtPdfText(x)); });
+}
 function qtValidate(){
   var c = qtCalc();
   if(!c.lines.length) return 'Add at least one item';
@@ -3815,7 +3720,7 @@ function qtBuildPdf(){
   function watermark(){
     if(!QT.watermark) return;
     doc.saveGraphicsState(); doc.setGState(new doc.GState({ opacity: 0.08 }));
-    if(logo){ var s = Math.min(125 / logo.w, 125 / logo.h), dw = logo.w * s, dh = logo.h * s; doc.addImage(logo.d, qtImgFmt(logo.d), (PW - dw) / 2, (PH - dh) / 2, dw, dh); }
+    if(logo){ var s = Math.min(125 / logo.w, 125 / logo.h), dw = logo.w * s, dh = logo.h * s; try{ doc.addImage(logo.d, qtImgFmt(logo.d), (PW - dw) / 2, (PH - dh) / 2, dw, dh); }catch(e){ logo = null; } }
     else { var txt = T(u.business || 'Quotation'), sz = 54; font(sz, 'bold', NAVY); var tw = doc.getTextWidth(txt); if(tw > 150){ sz = Math.max(16, sz * 150 / tw); font(sz, 'bold', NAVY); } doc.text(txt, PW / 2, PH / 2, { align: 'center', angle: 35 }); }
     doc.restoreGraphicsState();
   }
@@ -3823,7 +3728,7 @@ function qtBuildPdf(){
   watermark();
 
   /* ---- header: logo + business on the left, quotation details on the right ---- */
-  if(logo){ var s0 = Math.min(46 / logo.w, 22 / logo.h), lw = logo.w * s0, lh = logo.h * s0; doc.addImage(logo.d, qtImgFmt(logo.d), ML, y, lw, lh); y += lh + 3; }
+  if(logo){ var s0 = Math.min(46 / logo.w, 22 / logo.h), lw = logo.w * s0, lh = logo.h * s0; try{ doc.addImage(logo.d, qtImgFmt(logo.d), ML, y, lw, lh); y += lh + 3; }catch(e){ logo = null; } }
   font(15, 'bold', NAVY);
   qtWrap(doc, T(u.business || 'Quotation'), 108).forEach(function(ln){ y += 6; font(15, 'bold', NAVY); doc.text(ln, ML, y); });
   font(9, 'normal', DARK);
@@ -4013,7 +3918,7 @@ function openQuoteMaker(){
   var busy = false;
   function lock(on){ busy = on; $t('qtDl').disabled = on; $t('qtWa').disabled = on; }
   function downloaded(r){
-    var sv = qtSavePdf(r), note = $t('qtWaNote'); showToast('PDF downloaded');
+    var sv = qtSavePdf(r), note = $t('qtWaNote'); showToast(qtLossy() ? 'PDF downloaded — letters like Tamil / Hindi cannot be printed in the PDF, use English letters' : 'PDF downloaded');
     note.style.display = ''; note.innerHTML = '✔ <b>' + esc(sv.name) + '</b> is downloading. If nothing happened, <a href="' + sv.url + '" target="_blank" rel="noopener" style="color:#17325c;font-weight:700;text-decoration:underline">tap here to open the PDF</a> and save it from there.';
   }
   go('qtDl', 'click', function(){
@@ -4377,7 +4282,6 @@ document.querySelectorAll('.admin-tabs button[data-atab]').forEach(function(btn)
 function renderAdmin(){
   clearDashboardInterval();
   updatePayBadge();
-  updateResetBadge();
   if(currentAdminTab === 'dashboard') renderAdminDashboard();
   else if(currentAdminTab === 'orders') renderAdminOrders();
   else if(currentAdminTab === 'customers') renderAdminCustomers();
@@ -5023,6 +4927,7 @@ function renderAutoStatusRulesPanel(){
 }
 
 function renderAdminOrders(){
+  updatePayBadge();
   if(ORDER_AUTO_RULES_VIEW){ renderAutoStatusRulesPanel(); return; }
   var adminMain = document.getElementById('adminMain');
   var everything = getAllOrders();
@@ -5473,8 +5378,7 @@ function renderAdminCustomers(){
   var users = getUsers();
   var allGsts = Object.keys(users);
   var blockedCount = allGsts.filter(function(g){ return users[g].isActive === false; }).length;
-  var toolbar = '<div class="admin-toolbar"><h2>Dealer Profiles <span class="ac-sub" style="font-weight:400;">· '+allGsts.length+' dealers'+(blockedCount?' · '+blockedCount+' blocked':'')+'</span></h2>' +
-      '<div><button class="btn-admin outline" id="btnResetReqs">🔑 Password requests<span id="resetReqCount">'+(RESET_PENDING ? ' ('+RESET_PENDING+')' : '')+'</span></button></div></div>' +
+  var toolbar = '<div class="admin-toolbar"><h2>Dealer Profiles <span class="ac-sub" style="font-weight:400;">· '+allGsts.length+' dealers'+(blockedCount?' · '+blockedCount+' blocked':'')+'</span></h2></div>' +
     '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; align-items:center;">' +
       '<input type="text" id="dealerSearchInput" placeholder="🔍 Search by business name, GST or phone…" value="'+esc(DEALER_SEARCH||'')+'" style="flex:1; min-width:200px; border:1.3px solid #ddd3ba; border-radius:8px; padding:9px 12px; font-size:13px;">' +
       [['all','All ('+allGsts.length+')'],['active','Active ('+(allGsts.length-blockedCount)+')'],['blocked','Blocked ('+blockedCount+')']].map(function(f){
@@ -5522,8 +5426,6 @@ function renderAdminCustomers(){
         '<span>Page '+DEALER_PAGE+' / '+pages+'</span><button class="btn-admin sm outline" id="dNext"'+(DEALER_PAGE>=pages?' disabled':'')+'>Next ›</button></span></div>';
   }
   adminMain.innerHTML = toolbar + tableHtml;
-  var rrBtn = document.getElementById('btnResetReqs'); if(rrBtn) rrBtn.addEventListener('click', openResetRequests);
-  updateResetBadge();
   var dealerSearch = document.getElementById('dealerSearchInput');
   if(dealerSearch){
     dealerSearch.addEventListener('input', function(){

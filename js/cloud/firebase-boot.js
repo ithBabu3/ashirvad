@@ -65,7 +65,7 @@ function normPhone(p){ return String(p || '').replace(/\D/g, ''); }
 function dealerEmail(phone, gen){ return normPhone(phone) + (gen > 0 ? '.r' + gen : '') + '@' + opt.dealerEmailDomain; }
 function normAddr(a){ return String(a || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function dealerIdx(ph){
-  return db.collection('login_index').doc('dealer_' + ph).get().then(function(d){ var x = d.exists ? d.data() : {}; return { gen: Number(x.gen) || 0, resetOpen: x.resetOpen === true }; }, function(){ return { gen: 0, resetOpen: false }; });
+  return db.collection('login_index').doc('dealer_' + ph).get().then(function(d){ var x = d.exists ? d.data() : {}; return { gen: Number(x.gen) || 0 }; }, function(){ return { gen: 0 }; });
 }
 function adminEmail(user){ return String(user || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') + '@' + opt.adminEmailDomain; }
 function toast(msg){ try{ if(window.__acToast) window.__acToast(msg); else console.warn(msg); }catch(e){} }
@@ -406,16 +406,7 @@ CLOUD.authMessage = function(err, t, isAdmin){
 CLOUD.dealerLogin = function(phone, password){
   var ph = normPhone(phone);
   return dealerIdx(ph).then(function(ix){
-    return auth.signInWithEmailAndPassword(dealerEmail(ph, ix.gen), password).catch(function(err){
-      var c = (err && err.code) || '';
-      if(ix.resetOpen && ix.gen > 0 && /user-not-found|invalid-credential|wrong-password|invalid-login/.test(c)){
-        // a reset was approved but not finished yet: the old password still works until the new one is chosen
-        return auth.signInWithEmailAndPassword(dealerEmail(ph, ix.gen - 1), password).catch(function(){
-          var e = new Error('Your password reset was approved. Tap “Forgot password?” and choose your new password.'); e.code = 'ac/reset-pending'; throw e;
-        });
-      }
-      throw err;
-    });
+    return auth.signInWithEmailAndPassword(dealerEmail(ph, ix.gen), password);
   }).then(function(){
     CLOUD.role = 'dealer'; CLOUD.phone = ph;
     var b = buckets.ac_users;
@@ -433,7 +424,7 @@ CLOUD.dealerLogin = function(phone, password){
 CLOUD.dealerRegister = function(p){
   var ph = normPhone(p.phone), createdNow = false;
   return dealerIdx(ph).then(function(ix){
-    var email = dealerEmail(ph, ix.resetOpen && ix.gen > 0 ? ix.gen - 1 : ix.gen);
+    var email = dealerEmail(ph, ix.gen);
     return auth.createUserWithEmailAndPassword(email, p.password).then(function(){ createdNow = true; }, function(err){
       if(err && err.code === 'auth/email-already-in-use'){
         return auth.signInWithEmailAndPassword(email, p.password).catch(function(){ var e = new Error('phone'); e.code = 'ac/phone-wrong-password'; throw e; });
@@ -465,44 +456,30 @@ CLOUD.dealerRegister = function(p){
   });
 };
 
-/* ---- forgot password (admin approval) ---- */
-/* dealer, not signed in: ask for a reset */
-CLOUD.resetRequest = function(req){
-  var ph = normPhone(req.phone), at = Date.now();
-  return db.collection('reset_requests').doc(ph).set({ phone: ph, gst: req.gst, address: req.address, status: 'pending', at: at }).then(function(){ return { at: at }; }, function(err){
-    if(err && err.code === 'permission-denied'){ var e = new Error('A request for this phone number is already waiting for the admin. Please wait, or check its status.'); e.code = 'ac/reset-exists'; throw e; }
-    throw err;
-  });
-};
-/* dealer, not signed in: what did the admin decide about the request he sent at time `at`? */
-CLOUD.resetStatus = function(phone, at){
-  var ph = normPhone(phone);
-  return db.collection('login_index').doc('reset_' + ph).get().then(function(d){
-    var x = d.exists ? d.data() : null;
-    if(!x || Number(x.reqAt) !== Number(at)) return { status: 'pending' };
-    return { status: x.status };
-  });
-};
-/* dealer, after approval: create the next login for this phone with the new password, then close the reset */
-CLOUD.resetComplete = function(phone, newPw){
-  var ph = normPhone(phone);
+/* ---- forgot password (self service) ----
+   The dealer proves who he is with phone + GST + registered address; the Firestore rules compare those with his saved profile
+   (the browser cannot read it before login). If they match, a new login (next generation) is created with the new password. */
+CLOUD.resetPassword = function(req){
+  var ph = normPhone(req.phone), gst = String(req.gst || '').trim().toUpperCase(), addrKey = String(req.address || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  function attempt(gen, tries){
+    return auth.createUserWithEmailAndPassword(dealerEmail(ph, gen), req.password).then(function(){ return gen; }, function(err){
+      if(err && err.code === 'auth/email-already-in-use' && tries < 4) return attempt(gen + 1, tries + 1);
+      throw err;
+    });
+  }
   return dealerIdx(ph).then(function(ix){
-    if(!ix.resetOpen || ix.gen < 1){ var e = new Error('This reset is not approved, or it was already used.'); e.code = 'ac/reset-closed'; throw e; }
-    return auth.createUserWithEmailAndPassword(dealerEmail(ph, ix.gen), newPw).then(function(){
-      return db.collection('login_index').doc('dealer_' + ph).update({ resetOpen: false });
-    }).then(function(){ return auth.signOut(); });
-  });
+    return attempt(ix.gen + 1, 0).then(function(gen){
+      return db.collection('login_index').doc('dealer_' + ph).set({ gen: gen, gst: gst, addrKey: addrKey, at: Date.now() }).catch(function(err){
+        var undo = auth.currentUser ? auth.currentUser.delete().catch(function(){}) : Promise.resolve();
+        return undo.then(function(){
+          if(err && err.code === 'permission-denied'){ var e = new Error('nomatch'); e.code = 'ac/no-match'; throw e; }
+          throw err;
+        });
+      });
+    });
+  }).then(function(){ return auth.signOut(); });
 };
-/* admin */
-CLOUD.resetList = function(){
-  return db.collection('reset_requests').get().then(function(snap){ return snap.docs.map(function(d){ return Object.assign({ id: d.id }, d.data()); }); });
-};
-CLOUD.resetDecide = function(req, approve){
-  var ph = normPhone(req.phone), now = Date.now(), idx = db.collection('login_index');
-  var step1 = approve ? dealerIdx(ph).then(function(ix){ return idx.doc('dealer_' + ph).set({ gen: ix.resetOpen ? ix.gen : ix.gen + 1, resetOpen: true, at: now }); }) : Promise.resolve();
-  return step1.then(function(){ return idx.doc('reset_' + ph).set({ status: approve ? 'approved' : 'rejected', reqAt: req.at, at: now }); })
-    .then(function(){ return db.collection('reset_requests').doc(ph).update({ status: approve ? 'approved' : 'rejected' }); });
-};
+
 /* staff logins created in the website use an opaque e-mail; login_index/staff_<username> tells us which one (older logins fall back to <username>@domain) */
 function staffEmail(username){
   var key = 'staff_' + String(username || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');

@@ -70,23 +70,23 @@ service cloud.firestore {
       allow get: if true;
       allow list: if false;
       allow create, update, delete: if key.matches('staff_.*') ? isOwner() : canWrite();
-      // dealer_<phone>: after an approved reset the dealer, now signed in with the new login, closes the reset window
-      allow update: if isDealer() && key == ('dealer_' + myPhone()) && resource.data.get('resetOpen', false) == true
-                      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resetOpen'])
-                      && request.resource.data.resetOpen == false;
-    }
-    // forgot-password requests: anyone (not signed in) may file ONE request per phone; only the admin reads / decides.
-    // A new request is accepted only when the previous one was rejected, or approved and already used (reset window closed).
-    match /reset_requests/{phone} {
-      function reqShape() { return request.resource.data.keys().hasOnly(['phone','gst','address','status','at'])
-                              && request.resource.data.phone == phone && request.resource.data.status == 'pending'
-                              && phone.matches('[0-9]{10}') && request.resource.data.gst is string && request.resource.data.address is string
-                              && request.resource.data.gst.size() < 40 && request.resource.data.address.size() < 400; }
-      allow read: if isAdmin();
-      allow create: if canWrite() || reqShape();
-      allow update: if canWrite() || (reqShape() && (resource.data.status == 'rejected'
-                        || (resource.data.status == 'approved' && get(/databases/$(database)/documents/login_index/$('dealer_' + phone)).data.get('resetOpen', false) == false)));
-      allow delete: if canWrite();
+      // dealer_<phone>: forgot-password. A dealer (signed in with the NEW login that was just created) may move the login
+      // generation forward only when the phone / GST / address he typed match his saved profile.
+      function nz(x) { return x.lower().replace(' ','').replace(',','').replace('.','').replace('-','').replace('/','').replace('#','')
+                        .replace('(','').replace(')','').replace(':','').replace(';','').replace('&','').replace('_','').replace('+','')
+                        .replace('@','').replace('!','').replace('*','').replace('\'','').replace('"',''); }
+      function resetOk(oldGen) {
+        let r = request.resource.data;
+        return r.keys().hasOnly(['gen','gst','addrKey','at'])
+          && r.gen is int && r.gen > oldGen && r.gen <= oldGen + 5
+          && r.gst is string && r.gst.size() < 40 && r.addrKey is string && r.addrKey.size() > 5
+          && exists(/databases/$(database)/documents/dealers/$(r.gst))
+          && get(/databases/$(database)/documents/dealers/$(r.gst)).data.get('accountKey', '') == myPhone()
+          && (nz(get(/databases/$(database)/documents/dealers/$(r.gst)).data.get('address', '')) == r.addrKey
+              || nz(get(/databases/$(database)/documents/dealers/$(r.gst)).data.get('deliveryAddress', '')) == r.addrKey);
+      }
+      allow create: if isDealer() && key == ('dealer_' + myPhone()) && resetOk(0);
+      allow update: if isDealer() && key == ('dealer_' + myPhone()) && resetOk(resource.data.get('gen', 0));
     }
     // availability per product = sum of the distributors' stock; dealers read it, every distributor only writes his own key
     match /stock_totals/{pid} {
