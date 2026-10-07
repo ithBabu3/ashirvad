@@ -53,7 +53,7 @@ function FS(){ return CLOUD.firebase.firestore; }
 function toast(m){ try{ API.showToast(m); }catch(e){ alert(m); } }
 function main(){ return document.getElementById('adminMain'); }
 function who(){ return CLOUD.staffName || 'owner'; }
-var LABELS = { mrp: 'MRP', gst: 'GST no.', gstPct: 'GST %', part: 'Part code', qty: 'Quantity', ts: 'Time', createdAt: 'Created', updatedAt: 'Updated', isActive: 'Active', active: 'Active', discountPct: 'Discount %', stock: 'Stock', business: 'Business name', dealerGst: 'Dealer GST', distributorId: 'Distributor', productId: 'Product id', accountKey: 'Account (phone)', roleId: 'Role', by: 'By', n: 'Number', id: 'ID' };
+var LABELS = { cat: 'Category id', categoryId: 'Category id', en: 'Message', desc: 'Description', imageUrl: 'Picture link', buttonText: 'Button text', linkType: 'Link type', linkValue: 'Link to', badge: 'Badge', subtitle: 'Subtitle', size: 'Size', mrp: 'MRP', gst: 'GST no.', gstPct: 'GST %', part: 'Part code', qty: 'Quantity', ts: 'Time', createdAt: 'Created', updatedAt: 'Updated', isActive: 'Active', active: 'Active', discountPct: 'Discount %', stock: 'Stock', business: 'Business name', dealerGst: 'Dealer GST', distributorId: 'Distributor', productId: 'Product id', accountKey: 'Account (phone)', roleId: 'Role', by: 'By', n: 'Number', id: 'ID' };
 function humanize(k){ if(LABELS[k]) return LABELS[k]; var s = String(k).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim(); return s.charAt(0).toUpperCase() + s.slice(1); }
 function isTs(v){ return v && typeof v === 'object' && typeof v.toDate === 'function' && typeof v.seconds === 'number'; }
 function isSpecial(v){ return v && typeof v === 'object' && !Array.isArray(v) && !isTs(v) && (typeof v.path === 'string' || (typeof v.latitude === 'number' && typeof v.longitude === 'number') || typeof v.toUint8Array === 'function'); }
@@ -178,11 +178,12 @@ function render(){
     if(!list.length) return;
     h += '<div class="dm-h" style="margin:14px 2px 8px">' + g[0] + '</div><div class="dm-grid">' + list.map(function(mm){
       var c = S.counts[mm.id];
-      return '<div class="dm-model" data-m="' + mm.id + '"><div class="dm-ic">' + mm.icon + '</div><div class="dm-grow"><b>' + esc(mm.title) + '</b>' + (mm.sensitive ? ' <span class="dm-chip red">sensitive</span>' : '') + '<div class="dm-sub">' + esc(mm.desc) + '</div><span class="dm-cnt" data-cnt="' + mm.id + '">' + (c === undefined ? 'counting…' : c === null ? 'protected' : c + ' record' + (c === 1 ? '' : 's')) + '</span></div></div>'; }).join('') + '</div>';
+      return '<div class="dm-model" data-m="' + mm.id + '"><div class="dm-ic">' + mm.icon + '</div><div class="dm-grow"><b>' + esc(mm.title) + '</b>' + (mm.sensitive ? ' <span class="dm-chip red">sensitive</span>' : '') + '<div class="dm-sub">' + esc(mm.desc) + '</div>' + (TEMPLATES[mm.id] ? '<button type="button" class="dm-btn sm" data-add="' + mm.id + '" style="margin:6px 8px 0 0">＋ Add</button>' : '') + '<span class="dm-cnt" data-cnt="' + mm.id + '">' + (c === undefined ? 'counting…' : c === null ? 'protected' : c + ' record' + (c === 1 ? '' : 's')) + '</span></div></div>'; }).join('') + '</div>';
   });
   h += '<div class="dm-card dm-danger" style="margin-top:18px"><div class="dm-h" style="color:#b23b3b">☢ Delete data / Factory reset</div><div class="dm-sub" style="margin-bottom:10px">Wipe selected data (orders, dealers, catalogue, distributors …) or everything and start fresh. You choose exactly what goes, and you can download a backup first.</div><button class="dm-btn red" id="dmReset">Open delete / factory reset…</button></div></div>';
   m.innerHTML = h;
   m.querySelectorAll('[data-m]').forEach(function(el){ el.onclick = function(){ openModel(el.getAttribute('data-m')); }; });
+  m.querySelectorAll('[data-add]').forEach(function(el){ el.onclick = function(e){ e.stopPropagation(); openDoc(el.getAttribute('data-add'), null, null); }; });
   $('dmFind').oninput = function(){ var v = $('dmFind').value, p = $('dmFind').selectionStart; render(); var f = $('dmFind'); f.value = v; f.focus(); try{ f.setSelectionRange(p, p); }catch(e){} };
   $('dmFind').value = q;
   $('dmBackup').onclick = backupAll; $('dmRestore').onclick = restoreFlow; $('dmReset').onclick = function(){ openReset(); };
@@ -253,6 +254,7 @@ function deleteSelected(){
 /* deleting a login record must also free its login ID (otherwise “already exists” comes back) */
 function cleanLookup(coll, docs){
   var refs = [];
+  if(coll === 'accounts'){ return docs.reduce(function(p, d){ return p.then(function(){ return bumpPhone(normPh(d.id)); }).catch(function(){}); }, Promise.resolve()); }
   if(coll === 'dealers'){
     docs.forEach(function(d){ refs.push(db().collection('login_index').doc('gst_' + d.id)); });
     var phs = docs.map(function(d){ return normPh(d.data().accountKey || d.data().phone); });
@@ -312,10 +314,25 @@ function accessCheck(){
 
 /* ================================================================== the record editor (friendly form + raw JSON) */
 function typeOf(v){ if(v === null || v === undefined) return 'null'; if(isTs(v)) return 'timestamp'; if(isSpecial(v)) return 'kept'; if(typeof v === 'boolean') return 'boolean'; if(typeof v === 'number') return 'number'; if(typeof v === 'string') return 'string'; return 'json'; }
+/* Guided "Add record": the right fields, in the right order, with a hint under each, an automatic ID and a check for the must-fill ones. */
+var TEMPLATES = {
+  products: { idMode: 'number', required: ['name', 'mrp'], fields: [['name', 'string', '', 'Product name dealers see'], ['size', 'string', '', 'e.g. 2½" · Std class'], ['part', 'string', '', 'Your item / part code'], ['cat', 'string', '', 'Category id (see Categories)'], ['mrp', 'number', 0, 'Printed price in ₹'], ['discountPct', 'number', 0, 'Discount given to dealers, %'], ['gstPct', 'number', 18, 'GST %'], ['active', 'boolean', true, 'Show to dealers']] },
+  catalog_categories: { idMode: 'slug', required: ['name'], fields: [['name', 'string', '', 'Category name']] },
+  catalog_subcategories: { idMode: 'slug', required: ['name', 'categoryId'], fields: [['name', 'string', '', 'Sub-category name'], ['categoryId', 'string', '', 'ID of the category it belongs to']] },
+  offers: { idMode: 'number', required: ['title'], fields: [['badge', 'string', '', 'Small tag, e.g. NEW'], ['title', 'string', '', 'Offer title'], ['desc', 'string', '', 'Short description'], ['linkType', 'string', 'url', 'url or product'], ['linkValue', 'string', '', 'Where the offer opens'], ['active', 'boolean', true, 'Show to dealers']] },
+  banners: { idMode: 'number', required: ['title'], fields: [['title', 'string', '', 'Big text on the banner'], ['subtitle', 'string', '', 'Smaller text'], ['imageUrl', 'string', '', 'Picture web address (optional)'], ['buttonText', 'string', '', 'Text on the button (optional)'], ['linkType', 'string', 'url', 'url or product'], ['linkValue', 'string', '', 'Where the banner opens'], ['size', 'string', 'medium', 'small / medium / large'], ['active', 'boolean', true, 'Show to dealers']] },
+  broadcasts: { idMode: 'number', required: ['en'], fields: [['en', 'string', '', 'Message every dealer will see'], ['ts', 'number', 'NOW', 'Time — filled in automatically']] }
+};
+function tplSlug(x){ return String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); }
+function tplNextId(coll){
+  return db().collection(coll).orderBy('id', 'desc').limit(1).get().then(function(sn){ var m = sn.empty ? 0 : Number(sn.docs[0].data().id) || 0; return m + 1; }, function(){ return Date.now(); });
+}
 function openDoc(coll, id, snap, prefill){
   var mm = MODELS[coll], orig = snap ? snap.data() : (prefill || {}), isNew = !snap;
   if(isNew && !prefill && S.docs[0]){ var t = S.docs[0].data(); Object.keys(t).forEach(function(k){ var ty = typeOf(t[k]); orig[k] = ty === 'number' ? 0 : ty === 'boolean' ? false : ty === 'string' ? '' : ty === 'json' ? (Array.isArray(t[k]) ? [] : {}) : null; }); }
-  var rows = Object.keys(orig).map(function(k){ return { key: k, type: typeOf(orig[k]), val: orig[k] }; });
+  var tpl = isNew && !prefill ? TEMPLATES[coll] : null, hints = {};
+  if(tpl){ orig = {}; tpl.fields.forEach(function(f){ orig[f[0]] = f[2] === 'NOW' ? Date.now() : f[2]; hints[f[0]] = f[3]; }); }
+  var rows = Object.keys(orig).map(function(k){ return { key: k, type: typeOf(orig[k]), val: orig[k], hint: hints[k] }; });
   var mode = 'form';
   var w = sheet('<div class="dm-flex" style="justify-content:space-between"><h3 class="dm-h" style="margin:0">' + (isNew ? 'Add record — ' : 'Edit — ') + esc(mm.title) + '</h3><div class="dm-flex"><button class="dm-btn ghost sm" id="eForm">Form</button><button class="dm-btn ghost sm" id="eJson">Advanced (JSON)</button></div></div>' +
     (mm.sensitive ? '<div class="dm-sub" style="color:#b23b3b;margin-top:6px">⚠ Sensitive record — be careful.</div>' : '') +
@@ -336,7 +353,7 @@ function openDoc(coll, id, snap, prefill){
   }
   function paint(){
     if(mode === 'json'){ $('eBody').innerHTML = '<label class="dm-lab">Whole record as JSON</label><textarea class="dm-ta" id="eRaw" rows="16">' + esc(JSON.stringify(toJson(collect(true)), null, 2)) + '</textarea><div class="dm-key">Dates appear as {"$timestamp": "…"}. Keep them in that form.</div>'; return; }
-    $('eBody').innerHTML = rows.map(function(r, i){ return '<div class="dm-field"><div class="dm-flex" style="justify-content:space-between"><div><b>' + esc(humanize(r.key)) + '</b> <span class="dm-key">' + esc(r.key) + '</span></div><button class="dm-btn ghost sm" data-rm="' + i + '" title="Remove this field">✕</button></div>' + inputFor(r, i) + '</div>'; }).join('') +
+    $('eBody').innerHTML = rows.map(function(r, i){ return '<div class="dm-field"><div class="dm-flex" style="justify-content:space-between"><div><b>' + esc(humanize(r.key)) + '</b> <span class="dm-key">' + esc(r.key) + '</span>' + (r.hint ? '<div class="dm-key" style="margin:2px 0 4px">' + esc(r.hint) + (tpl && tpl.required.indexOf(r.key) >= 0 ? ' <b style="color:#b23b3b">· required</b>' : '') + '</div>' : '') + '</div><button class="dm-btn ghost sm" data-rm="' + i + '" title="Remove this field">✕</button></div>' + inputFor(r, i) + '</div>'; }).join('') +
       '<div class="dm-field"><b>Add a field</b><div class="dm-flex" style="margin-top:6px;flex-wrap:nowrap"><input class="dm-in" id="nfKey" placeholder="field name"><select class="dm-sel" id="nfType" style="width:auto">' + typeOpts('string') + '</select><button class="dm-btn sm" id="nfAdd">Add</button></div></div>';
     $('eBody').querySelectorAll('[data-rm]').forEach(function(b){ b.onclick = function(){ syncRows(); rows.splice(Number(b.getAttribute('data-rm')), 1); paint(); }; });
     $('nfAdd').onclick = function(){ var k = $('nfKey').value.trim(); if(!k || /[\/.]/.test(k) || rows.some(function(r){ return r.key === k; })){ toast('Enter a new field name (no dots or slashes)'); return; } syncRows(); var t = $('nfType').value; rows.push({ key: k, type: t, val: t === 'number' ? 0 : t === 'boolean' ? false : t === 'json' ? {} : t === 'null' ? null : '' }); paint(); };
@@ -355,6 +372,7 @@ function openDoc(coll, id, snap, prefill){
     return out;
   }
   paint();
+  if(tpl && tpl.idMode === 'number'){ tplNextId(coll).then(function(n){ var el = $('eId'); if(el && !el.value) el.value = String(n); }); }
   $('eForm').onclick = function(){ if(mode === 'form') return; try{ var o = collect(); rows = Object.keys(o).map(function(k){ return { key: k, type: typeOf(o[k]), val: o[k] }; }); mode = 'form'; paint(); }catch(e){ $('eErr').textContent = 'The JSON is not valid: ' + e.message; } };
   $('eJson').onclick = function(){ if(mode === 'json') return; try{ collect(); mode = 'json'; paint(); }catch(e){ $('eErr').textContent = e.message; } };
   $('eNo').onclick = closeSheet;
@@ -362,6 +380,13 @@ function openDoc(coll, id, snap, prefill){
     $('eErr').textContent = '';
     var out; try{ out = collect(); }catch(e){ $('eErr').textContent = e.message; return; }
     var did = isNew ? $('eId').value.trim() : id;
+    if(tpl){
+      var miss = tpl.required.filter(function(k){ return out[k] === undefined || out[k] === null || String(out[k]).trim() === '' || (k === 'mrp' && !(Number(out[k]) > 0)); });
+      if(miss.length){ $('eErr').textContent = 'Please fill in: ' + miss.map(humanize).join(', ') + '.'; return; }
+      if(!did) did = tpl.idMode === 'slug' ? tplSlug(out.name) : String(Date.now());
+      if(!did){ $('eErr').textContent = 'Please give this record a name or an ID.'; return; }
+      out.id = tpl.idMode === 'number' && /^[0-9]+$/.test(did) ? Number(did) : did;
+    }
     if(/[\/]/.test(did || '')){ $('eErr').textContent = 'The ID cannot contain “/”.'; return; }
     var ref = did ? db().collection(coll).doc(did) : db().collection(coll).doc();
     var go = function(){ $('eYes').disabled = true; ref.set(out).then(function(){ logAudit(isNew ? 'Data added' : 'Data edited', mm.title + ' / ' + ref.id); toast('Saved'); closeSheet(); S.cReq[coll] = 0; if(S.view === 'model') loadMore(true); }, function(e){ $('eYes').disabled = false; $('eErr').textContent = friendly(e).message; }); };

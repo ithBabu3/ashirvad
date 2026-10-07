@@ -2860,10 +2860,35 @@ var calcUnit = 'ft';
    Saved on this device only (like the quote maker). */
 var DC = { id: null, vals: {}, margin: 0 };
 var QT_PRESET = null;                                   /* lets the calculator hand its items to the quote maker */
+(function(){ if(document.getElementById('acDcCss')) return; var st = document.createElement('style'); st.id = 'acDcCss';
+  st.textContent = [
+  '.dc-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}.dc-head h2{font-size:20px;margin:0}',
+  '.dc-intro{color:#6b7280;font-size:13px;margin-bottom:12px}',
+  '.dc-picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:14px}',
+  '.dc-pick{border:2px solid #e6e9f2;background:#fff;border-radius:16px;padding:12px 10px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:3px;color:#1c2330}',
+  '.dc-pick.on{border-color:#17325c;background:#eef3ff;box-shadow:0 2px 10px rgba(23,50,92,.15)}.dc-pick .ic{font-size:26px}.dc-pick b{font-size:14.5px}.dc-pick i{font-style:normal;font-size:11.5px;color:#6b7280}',
+  '.dc-card{background:#fff;border:1px solid #e6e9f2;border-radius:16px;padding:14px;margin-bottom:12px}',
+  '.dc-step{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;margin-bottom:10px}.dc-step span{width:26px;height:26px;border-radius:50%;background:#17325c;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:13px;flex:none}',
+  '.dc-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}',
+  '.dc-field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}.dc-field label small{font-weight:400;color:#6b7280}',
+  '.dc-num{display:flex;align-items:stretch;border:1.5px solid #cfd6e6;border-radius:12px;overflow:hidden;background:#fff}',
+  '.dc-num button{border:0;background:#eef1f8;width:46px;font-size:22px;font-weight:700;color:#17325c;cursor:pointer;flex:none}.dc-num button:active{background:#dfe5f4}',
+  '.dc-num input{border:0;text-align:center;font-size:18px;font-weight:700;width:100%;min-width:0;padding:10px 4px;outline:none}',
+  '.dc-chips{display:flex;gap:8px;flex-wrap:wrap}.dc-chip{border:1.5px solid #cfd6e6;background:#fff;border-radius:99px;padding:7px 14px;font-weight:600;font-size:13.5px;cursor:pointer;color:#17325c}.dc-chip.on{background:#17325c;color:#fff;border-color:#17325c}',
+  '.dc-row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid #eef0f6}.dc-row:first-of-type{border-top:0}.dc-row .n{flex:1;min-width:0}.dc-row .n b{display:block;font-size:14px}.dc-row .n span{font-size:12px;color:#6b7280}.dc-row .a{text-align:right;white-space:nowrap}.dc-row .a b{display:block;font-size:14.5px}.dc-row .a span{font-size:12px;color:#6b7280}',
+  '.dc-total{background:#17325c;color:#fff;border-radius:14px;padding:14px;margin-top:10px;display:flex;justify-content:space-between;align-items:center}.dc-total b{font-size:22px}',
+  '.dc-priv{font-size:12px;color:#6b7280;margin-top:8px}',
+  '.dc-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.dc-actions button{padding:13px 8px;border-radius:12px;font-weight:700;font-size:14px;border:0;cursor:pointer}',
+  '.dc-empty{text-align:center;padding:26px 14px}.dc-empty .big{font-size:44px}.dc-empty h3{margin:8px 0 6px;font-size:18px}.dc-empty p{color:#6b7280;font-size:13.5px;margin-bottom:14px}',
+  '.dc-help{background:#f6f8fd;border:1px dashed #c5cde0;border-radius:12px;padding:10px 12px;font-size:12.5px;color:#455;margin:8px 0}',
+  '.dc-prev{background:#f3f9f5;border:1px solid #bfe0cb;border-radius:12px;padding:10px 12px;font-size:13px;margin-top:10px}.dc-prev b{display:block;margin-bottom:4px}',
+  '.dc-formula{font-size:12.5px;color:#17325c;background:#eef3ff;border-radius:8px;padding:5px 9px;margin:6px 0;display:inline-block}'
+  ].join('\n'); document.head.appendChild(st); })();
 function dcLoad(){ try{ var l = JSON.parse(localStorage.getItem('ac_dcalc_' + session) || '[]'); return Array.isArray(l) ? l.filter(function(t){ return t && t.id && Array.isArray(t.fields) && Array.isArray(t.items); }) : []; }catch(e){ return []; } }
 function dcSave(l){ try{ localStorage.setItem('ac_dcalc_' + session, JSON.stringify(l)); return true; }catch(e){ showToast('Could not save — browser storage is full'); return false; } }
 function dcNewId(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
 function dcNum(v){ var n = Number(v); return isFinite(n) && n > 0 ? n : 0; }
+function dcIcon(name){ var n = String(name || '').toLowerCase(); return /bath|toilet|wash/.test(n) ? '🚿' : /house|home|villa|floor/.test(n) ? '🏠' : /terrace|roof|tank/.test(n) ? '🏢' : /kitchen/.test(n) ? '🍳' : /garden|lawn/.test(n) ? '🌿' : /bore|well|motor|pump/.test(n) ? '💧' : '🧮'; }
 function dcQty(t, it, vals){
   var q = dcNum(it.base);
   (t.fields || []).forEach(function(f){ q += dcNum(vals[f.id]) * dcNum((it.coef || {})[f.id]); });
@@ -2881,42 +2906,56 @@ function dcLines(t, vals, margin){
   return out;
 }
 function dcStartVals(t){ var v = {}; (t.fields || []).forEach(function(f){ v[f.id] = f.def !== undefined && f.def !== '' ? f.def : ''; }); return v; }
+function dcFormula(t, it){
+  var parts = [];
+  if(dcNum(it.base)) parts.push(String(dcNum(it.base)));
+  (t.fields || []).forEach(function(f){ var c = dcNum((it.coef || {})[f.id]); if(c) parts.push(c + ' × ' + (f.label || 'field')); });
+  return parts.length ? parts.join(' + ') + (dcNum(t.waste) ? '  (+' + dcNum(t.waste) + '% extra)' : '') : 'quantity not set yet';
+}
 
 function renderCalculatorView(){
   var list = dcLoad();
   if(!list.length){
-    main.innerHTML = '<div class="section-title"><span>🧮 Calculator</span></div>' +
-      '<div class="empty-note"><div class="en-big">Make your own calculator</div><div class="mb-3">Create rules like <b>Bathroom</b>, <b>House</b> or <b>Terrace</b> with your own fields (e.g. number of bathrooms) and the products needed. Then get a quick quotation in seconds.</div>' +
-      '<button class="btn-royal" id="dcNew">＋ Create my first calculator</button>' +
-      '<div class="ac-sub" style="margin-top:12px">Quick start:</div><div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:6px"><button class="filter-chip" data-dcpre="Bathroom">🚿 Bathroom</button><button class="filter-chip" data-dcpre="House">🏠 House</button><button class="filter-chip" data-dcpre="Terrace">🏢 Terrace</button></div></div>';
+    main.innerHTML = '<div class="dc-head"><h2>🧮 Calculator</h2></div>' +
+      '<div class="dc-card dc-empty"><div class="big">🧮</div><h3>Make your own calculator</h3><p>Set it up once — for example <b>Bathroom</b>, <b>House</b> or <b>Terrace</b> — with the products it needs. Next time, just type the numbers and get the material list and price in seconds.</p>' +
+      '<button class="btn-royal" id="dcNew" style="width:100%">＋ Create my first calculator</button>' +
+      '<div class="dc-intro" style="margin:14px 0 8px">Or start from a ready outline:</div><div class="dc-chips" style="justify-content:center"><button class="dc-chip" data-dcpre="Bathroom">🚿 Bathroom</button><button class="dc-chip" data-dcpre="House">🏠 House</button><button class="dc-chip" data-dcpre="Terrace">🏢 Terrace</button></div></div>';
     document.getElementById('dcNew').onclick = function(){ dcEditor(null); };
     main.querySelectorAll('[data-dcpre]').forEach(function(b){ b.onclick = function(){ dcEditor(null, b.getAttribute('data-dcpre')); }; });
     return;
   }
-  if(!DC.id || !list.some(function(t){ return t.id === DC.id; })){ DC.id = list[0].id; DC.vals = dcStartVals(list[0]); DC.margin = dcNum(list[0].margin); }
+  if(!DC.id || !list.some(function(x){ return x.id === DC.id; })){ DC.id = list[0].id; DC.vals = dcStartVals(list[0]); DC.margin = dcNum(list[0].margin); }
   var tpl = list.filter(function(x){ return x.id === DC.id; })[0];
-  main.innerHTML = '<div class="section-title"><span>🧮 Calculator</span><button class="btn-admin sm outline" id="dcManage">⚙ Manage</button></div>' +
-    '<div style="display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:8px">' + list.map(function(x){ return '<button class="filter-chip' + (x.id === DC.id ? ' active' : '') + '" data-dcsel="' + esc(x.id) + '">' + esc(x.name) + '</button>'; }).join('') + '</div>' +
-    '<div class="account-card mb-3"><div class="admin-form-grid">' +
-      (tpl.fields.length ? tpl.fields.map(function(f){ return '<div><label>' + esc(f.label) + (f.unit ? ' <span class="ac-sub">(' + esc(f.unit) + ')</span>' : '') + '</label><input type="number" min="0" step="any" inputmode="decimal" data-dcf="' + esc(f.id) + '" value="' + esc(DC.vals[f.id] === undefined ? '' : DC.vals[f.id]) + '"></div>'; }).join('') : '<div class="full ac-sub">This calculator has no input fields — it just lists a fixed set of products.</div>') +
-      '<div><label>My margin %</label><input type="number" min="0" step="any" inputmode="decimal" id="dcMargin" value="' + esc(DC.margin) + '"></div>' +
-    '</div></div><div id="dcResult"></div>';
+  var chips = [0, 5, 10, 15, 20, 25];
+  main.innerHTML = '<div class="dc-head"><h2>🧮 Calculator</h2><button class="btn-admin sm outline" id="dcManage">⚙ My calculators</button></div>' +
+    '<div class="dc-intro">Choose a job, type the numbers, and get the material list with your price.</div>' +
+    '<div class="dc-picks">' + list.map(function(x){ return '<button type="button" class="dc-pick' + (x.id === DC.id ? ' on' : '') + '" data-dcsel="' + esc(x.id) + '"><span class="ic">' + dcIcon(x.name) + '</span><b>' + esc(x.name) + '</b><i>' + x.items.length + ' product' + (x.items.length === 1 ? '' : 's') + '</i></button>'; }).join('') + '</div>' +
+    '<div class="dc-card"><div class="dc-step"><span>1</span> Enter the details</div><div class="dc-fields">' +
+      (tpl.fields.length ? tpl.fields.map(function(f){ return '<div class="dc-field"><label>' + esc(f.label) + (f.unit ? ' <small>(' + esc(f.unit) + ')</small>' : '') + '</label><div class="dc-num"><button type="button" data-dcstep="' + esc(f.id) + '" data-dir="-1" aria-label="Less">−</button><input type="number" min="0" step="any" inputmode="decimal" data-dcf="' + esc(f.id) + '" value="' + esc(DC.vals[f.id] === undefined ? '' : DC.vals[f.id]) + '" placeholder="0"><button type="button" data-dcstep="' + esc(f.id) + '" data-dir="1" aria-label="More">+</button></div></div>'; }).join('') : '<div class="dc-help">This calculator has no input fields — it simply lists a fixed set of products.</div>') +
+    '</div></div>' +
+    '<div class="dc-card"><div class="dc-step"><span>2</span> Your margin</div><div class="dc-chips" id="dcChips">' + chips.map(function(c){ return '<button type="button" class="dc-chip' + (DC.margin === c ? ' on' : '') + '" data-dcm="' + c + '">' + c + '%</button>'; }).join('') + '</div>' +
+      '<div class="dc-num" style="margin-top:10px;max-width:200px"><button type="button" data-dcmstep="-1" aria-label="Less">−</button><input type="number" min="0" step="any" inputmode="decimal" id="dcMargin" value="' + esc(DC.margin) + '"><button type="button" data-dcmstep="1" aria-label="More">+</button></div><div class="dc-priv">Added on top of your dealer price. Only you see your margin.</div></div>' +
+    '<div id="dcResult"></div>';
   document.getElementById('dcManage').onclick = dcManager;
   main.querySelectorAll('[data-dcsel]').forEach(function(b){ b.onclick = function(){ var x = list.filter(function(y){ return y.id === b.getAttribute('data-dcsel'); })[0]; DC.id = x.id; DC.vals = dcStartVals(x); DC.margin = dcNum(x.margin); renderCalculatorView(); }; });
   main.querySelectorAll('[data-dcf]').forEach(function(i){ i.addEventListener('input', function(){ DC.vals[i.getAttribute('data-dcf')] = i.value; dcPaintResult(tpl); }); });
-  document.getElementById('dcMargin').addEventListener('input', function(e){ DC.margin = dcNum(e.target.value); dcPaintResult(tpl); });
+  main.querySelectorAll('[data-dcstep]').forEach(function(b){ b.onclick = function(){ var id = b.getAttribute('data-dcstep'), v = Math.max(0, (Number(DC.vals[id]) || 0) + Number(b.getAttribute('data-dir'))); DC.vals[id] = v; var inp = main.querySelector('[data-dcf="' + id + '"]'); if(inp) inp.value = v; dcPaintResult(tpl); }; });
+  function setMargin(v){ DC.margin = Math.max(0, dcNum(v)); document.getElementById('dcMargin').value = DC.margin; main.querySelectorAll('[data-dcm]').forEach(function(c){ c.classList.toggle('on', Number(c.getAttribute('data-dcm')) === DC.margin); }); dcPaintResult(tpl); }
+  main.querySelectorAll('[data-dcm]').forEach(function(c){ c.onclick = function(){ setMargin(c.getAttribute('data-dcm')); }; });
+  main.querySelectorAll('[data-dcmstep]').forEach(function(b){ b.onclick = function(){ setMargin(DC.margin + Number(b.getAttribute('data-dcmstep'))); }; });
+  document.getElementById('dcMargin').addEventListener('input', function(e){ DC.margin = dcNum(e.target.value); main.querySelectorAll('[data-dcm]').forEach(function(c){ c.classList.toggle('on', Number(c.getAttribute('data-dcm')) === DC.margin); }); dcPaintResult(tpl); });
   dcPaintResult(tpl);
 }
 function dcPaintResult(tpl){
   var box = document.getElementById('dcResult'); if(!box) return;
   var lines = dcLines(tpl, DC.vals, DC.margin);
-  if(!lines.length){ box.innerHTML = '<div class="empty-note"><div class="en-big">Enter the details above</div><div>The products and quantities appear here.</div></div>'; return; }
+  if(!lines.length){ box.innerHTML = '<div class="dc-card"><div class="dc-step"><span>3</span> Material list &amp; price</div><div class="dc-help">Type the numbers above — the products, quantities and price will appear here.</div></div>'; return; }
   var sell = r2(lines.reduce(function(a, l){ return a + l.line; }, 0)), cost = r2(lines.reduce(function(a, l){ return a + l.costLine; }, 0));
-  box.innerHTML = '<div class="admin-card mb-3"><div class="ac-title" style="margin-bottom:8px">' + esc(tpl.name) + '</div>' +
-    lines.map(function(l){ return '<div class="oi-line"><span>' + esc(l.p.name) + (l.p.size && l.p.name.indexOf(l.p.size) < 0 ? ' (' + esc(l.p.size) + ')' : '') + ' × ' + l.qty + '</span><span>' + money(l.line) + '</span></div>'; }).join('') +
-    '<div class="oi-line" style="font-weight:700"><span>Total for my customer</span><span>' + money(sell) + '</span></div>' +
-    '<div class="ac-sub" style="margin-top:6px">My cost ' + money(cost) + ' · my profit ' + money(r2(sell - cost)) + ' (only you see this)</div>' +
-    '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn-royal" id="dcCart" style="flex:1;min-width:140px">🛒 Add all to cart</button><button class="btn-royal" id="dcQuote" style="flex:1;min-width:140px;background:#1e7b46">📄 Quote for customer</button></div></div>';
+  box.innerHTML = '<div class="dc-card"><div class="dc-step"><span>3</span> Material list &amp; price</div>' +
+    lines.map(function(l){ return '<div class="dc-row"><div class="n"><b>' + esc(l.p.name) + '</b><span>' + (l.p.size && l.p.name.indexOf(l.p.size) < 0 ? esc(l.p.size) + ' · ' : '') + l.qty + ' × ' + money(l.sell) + '</span></div><div class="a"><b>' + money(l.line) + '</b></div></div>'; }).join('') +
+    '<div class="dc-total"><span>Total for my customer</span><b>' + money(sell) + '</b></div>' +
+    '<div class="dc-priv">My cost ' + money(cost) + ' · my profit ' + money(r2(sell - cost)) + ' — only you see this.</div>' +
+    '<div class="dc-actions"><button id="dcCart" style="background:#17325c;color:#fff">🛒 Add all to cart</button><button id="dcQuote" style="background:#1e7b46;color:#fff">📄 Make quote PDF</button></div></div>';
   document.getElementById('dcCart').onclick = function(){
     var cart = getCart(), short = 0;
     lines.forEach(function(l){ var stock = effStock(l.p), cur = cart[l.p.id] || 0, room = stock === Infinity ? l.qty : Math.max(0, stock - cur), add = Math.min(l.qty, room); if(add < l.qty) short++; if(add > 0) cart[l.p.id] = cur + add; });
@@ -2929,10 +2968,11 @@ function dcPaintResult(tpl){
 function dcManager(){
   var list = dcLoad();
   var w = toolSheet('<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>🧮 My calculators</h3><div class="sub">Make as many as you like: Bathroom, House, Terrace …</div></div><button type="button" class="acpay-btn ghost" id="dcmX" style="flex:none;padding:6px 12px">✕</button></div>' +
-    (list.length ? list.map(function(x){ return '<div class="qt-item" style="grid-template-columns:1fr auto"><div><b>' + esc(x.name) + '</b><div class="qt-sub">' + x.fields.length + ' field(s) · ' + x.items.length + ' product(s)</div></div><div><button type="button" class="acpay-btn ghost" data-dced="' + esc(x.id) + '" style="padding:4px 10px;font-size:12px">Edit</button> <button type="button" class="acpay-btn ghost" data-dcdup="' + esc(x.id) + '" style="padding:4px 10px;font-size:12px">Copy</button></div></div>'; }).join('') : '<div class="sub" style="padding:10px 0">No calculators yet.</div>') +
+    (list.length ? list.map(function(x){ return '<div class="dc-card" style="display:flex;align-items:center;gap:12px;margin:10px 0 0"><div style="font-size:28px">' + dcIcon(x.name) + '</div><div style="flex:1;min-width:0"><b>' + esc(x.name) + '</b><div class="qt-sub">' + x.fields.length + ' field' + (x.fields.length === 1 ? '' : 's') + ' · ' + x.items.length + ' product' + (x.items.length === 1 ? '' : 's') + '</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button type="button" class="acpay-btn ghost" data-dcuse="' + esc(x.id) + '" style="padding:5px 11px;font-size:12.5px">Use</button><button type="button" class="acpay-btn ghost" data-dced="' + esc(x.id) + '" style="padding:5px 11px;font-size:12.5px">Edit</button><button type="button" class="acpay-btn ghost" data-dcdup="' + esc(x.id) + '" style="padding:5px 11px;font-size:12.5px">Copy</button></div></div>'; }).join('') : '<div class="dc-help">No calculators yet — tap the green button to make one.</div>') +
     '<div class="acpay-row"><button type="button" class="acpay-btn green" id="dcmNew">＋ New calculator</button></div>', true);
   w.querySelector('#dcmX').onclick = paySheetClose;
   w.querySelector('#dcmNew').onclick = function(){ dcEditor(null); };
+  w.querySelectorAll('[data-dcuse]').forEach(function(b){ b.onclick = function(){ var x = list.filter(function(y){ return y.id === b.getAttribute('data-dcuse'); })[0]; DC.id = x.id; DC.vals = dcStartVals(x); DC.margin = dcNum(x.margin); paySheetClose(); if(currentView !== 'calculator') setView('calculator'); else renderCalculatorView(); }; });
   w.querySelectorAll('[data-dced]').forEach(function(b){ b.onclick = function(){ dcEditor(b.getAttribute('data-dced')); }; });
   w.querySelectorAll('[data-dcdup]').forEach(function(b){ b.onclick = function(){ var l = dcLoad(), x = l.filter(function(y){ return y.id === b.getAttribute('data-dcdup'); })[0]; if(!x) return; var c = JSON.parse(JSON.stringify(x)); c.id = dcNewId('c'); c.name = x.name + ' (copy)'; l.push(c); if(dcSave(l)){ showToast('Copied'); dcManager(); if(currentView === 'calculator') renderCalculatorView(); } }; });
 }
@@ -2943,6 +2983,7 @@ var DC_PRESETS = {
   House: { fields: [{ label: 'Floors', unit: 'nos', def: 1 }, { label: 'Bathrooms', unit: 'nos', def: 1 }, { label: 'Kitchens', unit: 'nos', def: 1 }] },
   Terrace: { fields: [{ label: 'Terrace area', unit: 'sq ft', def: '' }] }
 };
+var DC_QUICK_FIELDS = [['Bathrooms', 'nos'], ['Floors', 'nos'], ['Kitchens', 'nos'], ['Area', 'sq ft'], ['Length', 'ft']];
 function dcEditor(id, preset){
   var base = id ? dcLoad().filter(function(x){ return x.id === id; })[0] : null, E;
   if(base) E = JSON.parse(JSON.stringify(base));
@@ -2950,34 +2991,44 @@ function dcEditor(id, preset){
     if(preset && DC_PRESETS[preset]) E.fields = DC_PRESETS[preset].fields.map(function(f){ return { id: dcNewId('f'), label: f.label, unit: f.unit, def: f.def }; }); }
   var idx = buildProductIndex();
   var w = toolSheet('<div id="dcEd"></div>', true);
+  function previewHtml(){
+    var vals = {}; E.fields.forEach(function(f){ vals[f.id] = dcNum(f.def) || 1; });
+    var lines = dcLines(E, vals, 0);
+    if(!lines.length) return '<b>👀 Preview</b>Add products and quantities above to see how it will work.';
+    return '<b>👀 Preview — if ' + (E.fields.length ? E.fields.map(function(f){ return esc(f.label || 'field') + ' = ' + vals[f.id]; }).join(', ') : 'nothing is entered') + '</b>' + lines.map(function(l){ return esc(l.p.name) + ' → <b style="display:inline">' + l.qty + '</b>'; }).join('<br>');
+  }
+  function repaintPreview(){ var pv = w.querySelector('#dcePrev'); if(pv) pv.innerHTML = previewHtml(); w.querySelectorAll('[data-itf]').forEach(function(el){ var it = E.items[Number(el.getAttribute('data-itf'))]; if(it) el.textContent = '= ' + dcFormula(E, it); }); }
   function paint(){
     var box = w.querySelector('#dcEd');
-    box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>' + (base ? 'Edit calculator' : 'New calculator') + '</h3><div class="sub">Quantity of a product = fixed qty + (field value × qty per 1 of that field).</div></div><button type="button" class="acpay-btn ghost" id="dceX" style="flex:none;padding:6px 12px">✕</button></div>' +
-      '<label class="l">Calculator name</label><input id="dceName" placeholder="e.g. Bathroom, House, Terrace" value="' + esc(E.name) + '">' +
-      '<div class="qt-sec"><b style="font-size:13px">1. Input fields</b> <span class="sub">(what you type each time)</span>' +
-        E.fields.map(function(f, i){ return '<div class="acpay-row" style="align-items:flex-end"><div style="flex:2"><label class="l" style="margin-top:6px">Field name</label><input data-ff="label" data-i="' + i + '" value="' + esc(f.label) + '" placeholder="e.g. Bathrooms"></div><div style="flex:1"><label class="l" style="margin-top:6px">Unit</label><input data-ff="unit" data-i="' + i + '" value="' + esc(f.unit || '') + '" placeholder="nos / ft"></div><div style="flex:1"><label class="l" style="margin-top:6px">Default</label><input type="number" data-ff="def" data-i="' + i + '" value="' + esc(f.def === undefined ? '' : f.def) + '"></div><div style="flex:none"><button type="button" class="acpay-btn ghost" data-ffdel="' + i + '" style="padding:8px 10px" aria-label="Remove field">✕</button></div></div>'; }).join('') +
-        '<div class="acpay-row"><button type="button" class="acpay-btn ghost" id="dceAddF">＋ Add field</button></div></div>' +
-      '<div class="qt-sec"><b style="font-size:13px">2. Products needed</b>' +
-        '<input id="dceSearch" placeholder="🔍 Search a product to add…" style="margin-top:8px"><div id="dceRes" class="qo-res"></div>' +
+    box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><h3>' + (base ? 'Edit calculator' : 'New calculator') + '</h3><div class="sub">Build it once, use it every day. Follow the 3 steps.</div></div><button type="button" class="acpay-btn ghost" id="dceX" style="flex:none;padding:6px 12px">✕</button></div>' +
+      '<div class="dc-card" style="margin-top:10px"><div class="dc-step"><span>1</span> Name</div><input id="dceName" placeholder="e.g. Bathroom, House, Terrace" value="' + esc(E.name) + '"></div>' +
+      '<div class="dc-card"><div class="dc-step"><span>2</span> What will you type each time?</div><div class="dc-help">These are your own inputs — for a bathroom job it could be “Number of bathrooms”. Skip this if the product list is always the same.</div>' +
+        E.fields.map(function(f, i){ return '<div class="acpay-row" style="align-items:flex-end"><div style="flex:2"><label class="l" style="margin-top:6px">Field name</label><input data-ff="label" data-i="' + i + '" value="' + esc(f.label) + '" placeholder="e.g. Bathrooms"></div><div style="flex:1"><label class="l" style="margin-top:6px">Unit</label><input data-ff="unit" data-i="' + i + '" value="' + esc(f.unit || '') + '" placeholder="nos / ft"></div><div style="flex:1"><label class="l" style="margin-top:6px">Starts at</label><input type="number" data-ff="def" data-i="' + i + '" value="' + esc(f.def === undefined ? '' : f.def) + '"></div><div style="flex:none"><button type="button" class="acpay-btn ghost" data-ffdel="' + i + '" style="padding:8px 10px" aria-label="Remove field">✕</button></div></div>'; }).join('') +
+        '<div class="dc-chips" style="margin-top:10px">' + DC_QUICK_FIELDS.map(function(q){ return '<button type="button" class="dc-chip" data-dcq="' + esc(q[0]) + '|' + esc(q[1]) + '">＋ ' + esc(q[0]) + '</button>'; }).join('') + '<button type="button" class="dc-chip" id="dceAddF">＋ Other field</button></div></div>' +
+      '<div class="dc-card"><div class="dc-step"><span>3</span> Which products, and how many?</div><div class="dc-help">Quantity = <b>fixed qty</b> + <b>(qty per 1) × (what you typed)</b>. Example: a bathroom needs 1 fixed tap + 2 elbows per bathroom.</div>' +
+        '<input id="dceSearch" placeholder="🔍 Search a product to add…"><div id="dceRes" class="qo-res"></div>' +
         (E.items.length ? E.items.map(function(it, i){
           var p = PRODUCTS.find(function(x){ return x.id === it.pid; });
-          return '<div class="qt-item" style="grid-template-columns:1fr auto"><div><b>' + esc(p ? p.name : '(removed product)') + '</b><div class="qt-sub">' + esc(p ? ((p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + p.part) : '') + '</div></div><div style="text-align:right"><button type="button" class="acpay-btn ghost" data-itdel="' + i + '" style="padding:3px 9px;font-size:12px" aria-label="Remove product">✕</button></div>' +
-            '<div style="grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:90px"><label class="qt-sub">Fixed qty</label><input type="number" min="0" step="any" data-itb="' + i + '" value="' + esc(it.base || '') + '" placeholder="0"></div>' +
-            E.fields.map(function(f){ return '<div style="flex:1;min-width:90px"><label class="qt-sub">per 1 ' + esc(f.label || 'field') + '</label><input type="number" min="0" step="any" data-itc="' + i + '" data-fid="' + esc(f.id) + '" value="' + esc((it.coef || {})[f.id] || '') + '" placeholder="0"></div>'; }).join('') + '</div></div>';
-        }).join('') : '<div class="sub" style="padding:8px 0">No products yet — search above.</div>') + '</div>' +
-      '<div class="acpay-row"><div><label class="l">Extra for waste / cutting %</label><input id="dceWaste" type="number" min="0" step="any" value="' + esc(E.waste || 0) + '"></div><div><label class="l">Default margin %</label><input id="dceMargin" type="number" min="0" step="any" value="' + esc(E.margin || 0) + '"></div></div>' +
+          return '<div class="dc-card" style="margin:10px 0 0;background:#fbfcff"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>' + esc(p ? p.name : '(removed product)') + '</b><div class="qt-sub">' + esc(p ? ((p.size && p.name.indexOf(p.size) < 0 ? p.size + ' · ' : '') + p.part) : '') + '</div></div><button type="button" class="acpay-btn ghost" data-itdel="' + i + '" style="padding:3px 9px;font-size:12px;align-self:flex-start" aria-label="Remove product">✕</button></div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><div style="flex:1;min-width:90px"><label class="qt-sub">Fixed qty</label><input type="number" min="0" step="any" data-itb="' + i + '" value="' + esc(it.base || '') + '" placeholder="0"></div>' +
+            E.fields.map(function(f){ return '<div style="flex:1;min-width:90px"><label class="qt-sub">per 1 ' + esc(f.label || 'field') + '</label><input type="number" min="0" step="any" data-itc="' + i + '" data-fid="' + esc(f.id) + '" value="' + esc((it.coef || {})[f.id] || '') + '" placeholder="0"></div>'; }).join('') + '</div>' +
+            '<span class="dc-formula" data-itf="' + i + '">= ' + esc(dcFormula(E, it)) + '</span></div>';
+        }).join('') : '<div class="dc-help" style="margin-top:10px">No products yet — search above and tap one.</div>') + '</div>' +
+      '<div class="dc-prev" id="dcePrev">' + previewHtml() + '</div>' +
+      '<div class="acpay-row"><div><label class="l">Extra for waste / cutting %</label><input id="dceWaste" type="number" min="0" step="any" value="' + esc(E.waste || 0) + '"></div><div><label class="l">Usual margin %</label><input id="dceMargin" type="number" min="0" step="any" value="' + esc(E.margin || 0) + '"></div></div>' +
       '<div class="acpay-err" id="dceErr"></div>' +
       '<div class="acpay-row"><button type="button" class="acpay-btn green" id="dceSave">Save calculator</button>' + (base ? '<button type="button" class="acpay-btn red" id="dceDel">Delete</button>' : '') + '</div>';
     box.querySelector('#dceX').onclick = paySheetClose;
     box.querySelector('#dceName').oninput = function(e){ E.name = e.target.value; };
-    box.querySelector('#dceWaste').oninput = function(e){ E.waste = dcNum(e.target.value); };
+    box.querySelector('#dceWaste').oninput = function(e){ E.waste = dcNum(e.target.value); repaintPreview(); };
     box.querySelector('#dceMargin').oninput = function(e){ E.margin = dcNum(e.target.value); };
     box.querySelector('#dceAddF').onclick = function(){ E.fields.push({ id: dcNewId('f'), label: '', unit: '', def: '' }); paint(); };
-    box.querySelectorAll('[data-ff]').forEach(function(i){ i.oninput = function(){ var f = E.fields[Number(i.getAttribute('data-i'))]; if(f) f[i.getAttribute('data-ff')] = i.value; }; });
+    box.querySelectorAll('[data-dcq]').forEach(function(b){ b.onclick = function(){ var q = b.getAttribute('data-dcq').split('|'); E.fields.push({ id: dcNewId('f'), label: q[0], unit: q[1], def: 1 }); paint(); }; });
+    box.querySelectorAll('[data-ff]').forEach(function(i){ i.oninput = function(){ var f = E.fields[Number(i.getAttribute('data-i'))]; if(f){ f[i.getAttribute('data-ff')] = i.value; repaintPreview(); } }; });
     box.querySelectorAll('[data-ffdel]').forEach(function(b){ b.onclick = function(){ var f = E.fields.splice(Number(b.getAttribute('data-ffdel')), 1)[0]; E.items.forEach(function(it){ if(it.coef) delete it.coef[f.id]; }); paint(); }; });
     box.querySelectorAll('[data-itdel]').forEach(function(b){ b.onclick = function(){ E.items.splice(Number(b.getAttribute('data-itdel')), 1); paint(); }; });
-    box.querySelectorAll('[data-itb]').forEach(function(i){ i.oninput = function(){ E.items[Number(i.getAttribute('data-itb'))].base = dcNum(i.value); }; });
-    box.querySelectorAll('[data-itc]').forEach(function(i){ i.oninput = function(){ var it = E.items[Number(i.getAttribute('data-itc'))]; it.coef = it.coef || {}; it.coef[i.getAttribute('data-fid')] = dcNum(i.value); }; });
+    box.querySelectorAll('[data-itb]').forEach(function(i){ i.oninput = function(){ E.items[Number(i.getAttribute('data-itb'))].base = dcNum(i.value); repaintPreview(); }; });
+    box.querySelectorAll('[data-itc]').forEach(function(i){ i.oninput = function(){ var it = E.items[Number(i.getAttribute('data-itc'))]; it.coef = it.coef || {}; it.coef[i.getAttribute('data-fid')] = dcNum(i.value); repaintPreview(); }; });
     box.querySelector('#dceSearch').oninput = function(e){
       var q = e.target.value.trim(), res = box.querySelector('#dceRes'); if(q.length < 2){ res.innerHTML = ''; return; }
       var hits = qoFind(q, idx, 6); res.innerHTML = hits.length ? hits.map(function(h){ return '<button type="button" data-dcadd="' + h.p.id + '">' + esc(qoOptLabel(h.p)) + '</button>'; }).join('') : '<div class="qo-hint">No match.</div>';
@@ -3457,7 +3508,15 @@ function adminPayPanelHtml(o){
   '.cfg-list{background:#fff;border:1px solid #ebe4cd;border-radius:14px;overflow:hidden}',
   '.cfg-item{display:flex;gap:12px;align-items:center;padding:13px 14px;border-top:1px solid #f0ead8;cursor:pointer}.cfg-item:first-child{border-top:0}.cfg-item:hover{background:#faf7ee}',
   '.cfg-ic{font-size:22px;width:34px;text-align:center;flex:none}.cfg-tx{flex:1;min-width:0}.cfg-tx b{display:block;font-size:14.5px}.cfg-tx span{display:block;font-size:12.5px;color:#6b7280;margin-top:2px}',
-  '.cfg-go{color:#17325c;font-size:20px;flex:none}.cfg-pill{display:inline-block;font-size:10.5px;font-weight:600;border-radius:99px;padding:1px 8px;margin-left:6px;background:#e4f5ea;color:#1e7b46}.cfg-pill.no{background:#fdf1e0;color:#a56500}'
+  '.cfg-go{color:#17325c;font-size:20px;flex:none}',
+  '.cfg-card{background:#fff;border:1px solid #ebe4cd;border-radius:16px;padding:14px;margin-bottom:16px}.cfg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.cfg-head b{font-size:15px}',
+  '.cfg-bar{height:7px;background:#eef0f6;border-radius:99px;overflow:hidden;margin-bottom:6px}.cfg-bar i{display:block;height:100%;background:#1e7b46;border-radius:99px}',
+  '.cfg-check{display:flex;gap:12px;align-items:center;padding:11px 2px;border-top:1px solid #f0ead8;cursor:pointer}.cfg-check:first-of-type{border-top:0}.cfg-check:hover{background:#faf7ee}',
+  '.cfg-check .ck{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex:none}.ck.ok{background:#e4f5ea;color:#1e7b46}.ck.no{background:#fdf1e0;color:#a56500}',
+  '.cfg-check .cfg-go{font-size:13px;font-weight:600}.cfg-label{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280;margin:4px 2px 8px}',
+  '.cfg-tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}@media(min-width:760px){.cfg-tiles{grid-template-columns:repeat(4,1fr)}}',
+  '.cfg-tile{background:#fff;border:1px solid #ebe4cd;border-radius:16px;padding:14px 12px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:3px;color:#1c2330}.cfg-tile:hover{border-color:#17325c;box-shadow:0 2px 10px rgba(23,50,92,.12)}.cfg-tile .ti{font-size:26px}.cfg-tile b{font-size:14px}.cfg-tile .ts{font-size:11.5px;color:#6b7280;line-height:1.35}',
+  '.cfg-pill{display:inline-block;font-size:10.5px;font-weight:600;border-radius:99px;padding:1px 8px;margin-left:6px;background:#e4f5ea;color:#1e7b46}.cfg-pill.no{background:#fdf1e0;color:#a56500}'
   ].join('\n'); document.head.appendChild(st); })();
 
 /* a small pop-up that asks WHY (used when an order is cancelled) */
@@ -3561,7 +3620,7 @@ function adminTick(){
   var sig = adminSignature();
   if(ADMIN_SIG !== null && sig !== ADMIN_SIG && !adminBusy() && /^(dashboard|orders|customers)$/.test(currentAdminTab)){ try{ renderAdmin(); }catch(e){} }
   ADMIN_SIG = sig;
-  if(ADMIN_TICKS % 12 === 0 && window.AC_CLOUD && AC_CLOUD.syncIndexes) AC_CLOUD.syncIndexes();
+  if(ADMIN_TICKS % 12 === 0 && window.AC_CLOUD && AC_CLOUD.syncIndexes){ AC_CLOUD.syncIndexes(); if(AC_CLOUD.releaseOrphans) AC_CLOUD.releaseOrphans(); }
 }
 setInterval(adminTick, 5000);
 document.addEventListener('click', function(e){
@@ -7784,41 +7843,34 @@ function goToAdminTab(tab){
 function renderAdminConfiguration(){
   if(PRICING_OVERVIEW_VIEW){ renderPricingOverview(); return; }
   var adminMain = document.getElementById('adminMain');
-  var S0 = SETTINGS || {}, owner = !(window.AC_CLOUD && AC_CLOUD.enabled) || !AC_CLOUD.staffRole || AC_CLOUD.staffRole === 'owner';
-  var pill = function(ok, yes, no){ return '<span class="cfg-pill' + (ok ? '' : ' no') + '">' + (ok ? yes : no) + '</span>'; };
-  /* settings only — data tools (backup, restore, reset, cloud) live in the Data tab, products / dealers / categories in their own tabs */
-  var sections = [
-    ['Shop & billing', [
-      { icon: '🧾', title: 'Shop, invoice & payments', sub: 'Shop name, logo, GSTIN, address, UPI / QR / bank details and the Pay now / Pay later options.',
-        tag: pill(!!(S0.shopName || S0.shopGstin), 'Shop set', 'Not set') + pill(!!(S0.upiId || S0.qrImage), 'Payment set', 'No payment details'), action: function(){ openInvoiceSettings(); } },
-      { icon: '🚚', title: 'Delivery & support', sub: 'Free-delivery minimum, delivery charge, support phone and e-mail.',
-        tag: S0.freeDeliveryMin ? '<span class="cfg-pill">Free above ' + money(S0.freeDeliveryMin) + '</span>' : '', action: function(){ openDeliverySettings(); } }
-    ]],
-    ['Orders', [
-      { icon: '⏱', title: 'Auto-status rules', sub: 'How quickly a dealer\'s orders move Confirmed → Dispatched → Delivered on their own (per dealer or in bulk).',
-        tag: '', action: function(){ ORDER_AUTO_RULES_VIEW = true; goToAdminTab('orders'); } }
-    ]],
-    ['Pricing', [
-      { icon: '📊', title: 'Pricing overview', sub: 'Read-only audit: every product\'s MRP → dealer price, and which dealers have a special rate.',
-        tag: '', action: function(){ PRICING_OVERVIEW_VIEW = true; renderAdminConfiguration(); } }
-    ]],
-    ['Data & access', [
-      { icon: '🗄', title: 'Data', sub: 'Backup, restore, browse records, check database access and delete / factory reset — all in the Data tab.',
-        tag: owner ? '' : '<span class="cfg-pill no">Owner only</span>', action: function(){ goToAdminTab('data'); } }
-    ].concat((window.AC_CLOUD && AC_CLOUD.enabled) ? [
-      { icon: '👥', title: 'Staff logins & roles', sub: 'Add managers / viewers and distributor roles (Distributors tab → Access).', tag: '', action: function(){ goToAdminTab('distributors'); } }
-    ] : [])]
+  var S0 = SETTINGS || {}, cloud = !!(window.AC_CLOUD && AC_CLOUD.enabled);
+  /* settings only — backup / restore / reset live in the Data tab, products / dealers / categories in their own tabs */
+  var checks = [
+    { icon: '🏪', title: 'Shop name', ok: !!S0.shopName, val: S0.shopName || 'Not set yet', go: function(){ openInvoiceSettings(); } },
+    { icon: '🧾', title: 'GSTIN & address (on invoices)', ok: !!(S0.shopGstin && S0.shopAddress), val: S0.shopGstin ? S0.shopGstin : 'Not set yet', go: function(){ openInvoiceSettings(); } },
+    { icon: '💳', title: 'Payment details', ok: !!(S0.upiId || S0.qrImage), val: S0.upiId ? 'UPI ' + S0.upiId : (S0.qrImage ? 'QR image added' : 'Not set yet'), go: function(){ openInvoiceSettings(); } },
+    { icon: '🚚', title: 'Delivery', ok: S0.freeDeliveryMin !== undefined && S0.freeDeliveryMin !== '' || S0.deliveryCharge !== undefined && S0.deliveryCharge !== '', val: (S0.freeDeliveryMin ? 'Free above ' + money(S0.freeDeliveryMin) : 'No free-delivery limit') + (S0.deliveryCharge ? ' · charge ' + money(S0.deliveryCharge) : ''), go: function(){ openDeliverySettings(); } },
+    { icon: '📞', title: 'Support contact', ok: !!(S0.shopPhone || S0.supportEmail), val: [S0.shopPhone, S0.supportEmail].filter(Boolean).join(' · ') || 'Not set yet', go: function(){ openDeliverySettings(); } }
   ];
-  var all = []; 
+  var done = checks.filter(function(c){ return c.ok; }).length;
+  var tiles = [
+    { icon: '🧾', title: 'Shop, invoice & payments', sub: 'Name, logo, GSTIN, UPI / QR, Pay now / later', go: function(){ openInvoiceSettings(); } },
+    { icon: '🚚', title: 'Delivery & support', sub: 'Free-delivery limit, charge, contact', go: function(){ openDeliverySettings(); } },
+    { icon: '⏱', title: 'Auto-status rules', sub: 'Orders move on their own', go: function(){ ORDER_AUTO_RULES_VIEW = true; goToAdminTab('orders'); } },
+    { icon: '📊', title: 'Pricing overview', sub: 'MRP → dealer price audit', go: function(){ PRICING_OVERVIEW_VIEW = true; renderAdminConfiguration(); } }
+  ];
+  var more = [
+    { icon: '🗄', title: 'Data', sub: 'Backup · restore · add / edit records · reset', go: function(){ goToAdminTab('data'); } }
+  ].concat(cloud ? [{ icon: '👥', title: 'Staff logins', sub: 'Managers, viewers, distributor roles', go: function(){ goToAdminTab('distributors'); } }] : []);
+  var all = [];
+  var tile = function(c){ all.push(c); return '<button type="button" class="cfg-tile" data-cfg-idx="' + (all.length - 1) + '"><span class="ti">' + c.icon + '</span><b>' + esc(c.title) + '</b><span class="ts">' + esc(c.sub) + '</span></button>'; };
   adminMain.innerHTML = '<div class="admin-toolbar"><h2>⚙️ Configuration</h2><span class="ac-sub">Shop settings</span></div>' +
-    sections.map(function(sec){
-      return '<div class="cfg-sec"><h3>' + esc(sec[0]) + '</h3><div class="cfg-list">' + sec[1].map(function(c){
-        all.push(c); var i = all.length - 1;
-        return '<div class="cfg-item" role="button" tabindex="0" data-cfg-idx="' + i + '"><div class="cfg-ic">' + c.icon + '</div><div class="cfg-tx"><b>' + esc(c.title) + (c.tag || '') + '</b><span>' + esc(c.sub) + '</span></div><div class="cfg-go">›</div></div>';
-      }).join('') + '</div></div>';
-    }).join('');
+    '<div class="cfg-card"><div class="cfg-head"><b>Setup checklist</b><span class="cfg-pill' + (done === checks.length ? '' : ' no') + '">' + done + ' of ' + checks.length + ' ready</span></div><div class="cfg-bar"><i style="width:' + Math.round(done / checks.length * 100) + '%"></i></div>' +
+      checks.map(function(c){ all.push(c); return '<div class="cfg-check" role="button" tabindex="0" data-cfg-idx="' + (all.length - 1) + '"><span class="ck ' + (c.ok ? 'ok' : 'no') + '">' + (c.ok ? '✔' : '!') + '</span><span class="cfg-tx"><b>' + c.icon + ' ' + esc(c.title) + '</b><span>' + esc(c.val) + '</span></span><span class="cfg-go">Edit</span></div>'; }).join('') + '</div>' +
+    '<div class="cfg-label">Quick settings</div><div class="cfg-tiles">' + tiles.map(tile).join('') + '</div>' +
+    '<div class="cfg-label">More</div><div class="cfg-tiles">' + more.map(tile).join('') + '</div>';
   adminMain.querySelectorAll('[data-cfg-idx]').forEach(function(el){
-    var go = function(){ all[Number(el.getAttribute('data-cfg-idx'))].action(); };
+    var go = function(){ all[Number(el.getAttribute('data-cfg-idx'))].go(); };
     el.addEventListener('click', go); el.addEventListener('keydown', function(e){ if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); go(); } });
   });
 }

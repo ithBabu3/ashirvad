@@ -452,6 +452,38 @@ CLOUD.dealerLogin = function(phone, password){
     });
   });
 };
+/* The phone already has a sign-in but the typed password is wrong. If ALL businesses of that login were deleted (nothing is left to protect),
+   start a fresh login for the same phone (next generation). The Firestore rules only allow this while no accounts/<phone> record exists. */
+function claimFreshLogin(ph, gen, password){
+  function make(g, tries){
+    return auth.createUserWithEmailAndPassword(dealerEmail(ph, g), password).then(function(){ return g; }, function(err){
+      if(err && err.code === 'auth/email-already-in-use' && tries < 4) return make(g + 1, tries + 1);
+      throw err;
+    });
+  }
+  return make(gen + 1, 0).then(function(g){
+    return db.collection('login_index').doc('dealer_' + ph).set({ gen: g, fresh: true, at: Date.now() }).catch(function(err){
+      var undo = auth.currentUser ? auth.currentUser.delete().catch(function(){}) : Promise.resolve();
+      return undo.then(function(){ throw err; });
+    });
+  });
+}
+/* Admin: sign-in records whose businesses were ALL deleted (e.g. in the Firebase console) are released so the phone can register again. */
+CLOUD.releaseOrphans = function(){
+  if(CLOUD.role !== 'admin' || CLOUD.staffRole === 'viewer' || CLOUD.sweeping) return Promise.resolve();
+  var live = {}; buckets.ac_users.docs.forEach(function(v){ var k = normPhone(v.accountKey || v.phone); if(k) live[k] = 1; });
+  var cand = []; buckets.ac_accounts.docs.forEach(function(v, k){ var ph = normPhone(k); if(ph && !live[ph]) cand.push(ph); });
+  if(!cand.length) return Promise.resolve();
+  CLOUD.sweeping = true;
+  return cand.slice(0, 5).reduce(function(p, ph){ return p.then(function(){
+    return db.collection('dealers').where('accountKey', '==', ph).limit(1).get({ source: 'server' }).then(function(sn){
+      if(!sn.empty) return;                                   // the server still has a business: leave it alone
+      return dealerIdx(ph).then(function(ix){ return db.collection('login_index').doc('dealer_' + ph).set({ gen: ix.gen + 1, at: Date.now(), released: true }); })
+        .then(function(){ return db.collection('accounts').doc(ph).delete(); });
+    });
+  }).catch(function(){}); }, Promise.resolve()).then(function(){ CLOUD.sweeping = false; }, function(){ CLOUD.sweeping = false; });
+};
+
 /* New dealer, or an existing login adding one more business (same phone, any GST).
    Only a GST number that already exists is refused. Returns { existing, sameAddress } so the screen can explain what happened. */
 CLOUD.dealerRegister = function(p){
@@ -460,7 +492,9 @@ CLOUD.dealerRegister = function(p){
     var email = dealerEmail(ph, ix.gen);
     return auth.createUserWithEmailAndPassword(email, p.password).then(function(){ createdNow = true; }, function(err){
       if(err && err.code === 'auth/email-already-in-use'){
-        return auth.signInWithEmailAndPassword(email, p.password).then(function(){ info.existing = true; }, function(){ throw coded('ac/phone-wrong-password', 'phone'); });
+        return auth.signInWithEmailAndPassword(email, p.password).then(function(){ info.existing = true; }, function(){
+          return claimFreshLogin(ph, ix.gen, p.password).then(function(){ createdNow = true; }, function(){ throw coded('ac/phone-wrong-password', 'phone'); });
+        });
       }
       throw err;
     });
@@ -474,19 +508,19 @@ CLOUD.dealerRegister = function(p){
       info.sameAddress = snap.docs.some(function(d){ var x = d.data(); return addrKeyOf(x.address) === addrKeyOf(p.address) || addrKeyOf(x.deliveryAddress) === addrKeyOf(p.address); });
     });
   }).then(function(){
+    return db.collection('accounts').doc(ph).set({ gsts: firebase.firestore.FieldValue.arrayUnion(p.gst) }, { merge: true });
+  }).then(function(){
     var profile = {
       business: p.business, gst: p.gst, phone: ph, address: p.address, contactPerson: '', email: '',
       deliveryAddress: p.address, tier: 'Standard', notes: '', standingDiscountPct: 0, accountKey: ph
     };
     return db.collection('dealers').doc(p.gst).set(profile).catch(function(err){
       var undo = createdNow && auth.currentUser ? auth.currentUser.delete().catch(function(){}) : Promise.resolve();
-      return undo.then(function(){
+      return undo.then(function(){ return db.collection('accounts').doc(ph).set({ gsts: firebase.firestore.FieldValue.arrayRemove(p.gst) }, { merge: true }).catch(function(){}); }).then(function(){
         if(err && err.code === 'permission-denied'){ throw coded('ac/gst-exists', 'gst'); }
         throw err;
       });
     }).then(function(){ return syncGstIndex([profile]); });
-  }).then(function(){
-    return db.collection('accounts').doc(ph).set({ gsts: firebase.firestore.FieldValue.arrayUnion(p.gst) }, { merge: true });
   }).then(function(){ return info; });
 };
 

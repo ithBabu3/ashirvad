@@ -90,6 +90,14 @@ service cloud.firestore {
           && (nz(get(/databases/$(database)/documents/dealers/$(r.gst)).data.get('address', '')) == r.addrKey
               || nz(get(/databases/$(database)/documents/dealers/$(r.gst)).data.get('deliveryAddress', '')) == r.addrKey);
       }
+      // fresh login after every business of this phone was deleted: allowed only while no accounts/<phone> record exists
+      function claimOk(oldGen) {
+        let r = request.resource.data;
+        return r.keys().hasOnly(['gen','fresh','at']) && r.fresh == true && r.gen is int && r.gen > oldGen && r.gen <= oldGen + 5
+          && !exists(/databases/$(database)/documents/accounts/$(myPhone()));
+      }
+      allow create: if isDealer() && key == ('dealer_' + myPhone()) && claimOk(0);
+      allow update: if isDealer() && key == ('dealer_' + myPhone()) && claimOk(resource.data.get('gen', 0));
       allow create: if isDealer() && key == ('dealer_' + myPhone()) && resetOk(0);
       allow update: if isDealer() && key == ('dealer_' + myPhone()) && resetOk(resource.data.get('gen', 0));
     }
