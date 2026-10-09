@@ -111,6 +111,11 @@ st.textContent = [
 '.dm-bar2{height:9px;border-radius:99px;background:#e5e7eb;overflow:hidden;margin:10px 0}.dm-bar2 i{display:block;height:100%;width:0;background:linear-gradient(90deg,#17325c,#2b6ab8);transition:width .25s}',
 '.dm-opt{border:1.5px solid #d8dbe3;border-radius:12px;padding:10px 12px;margin-bottom:8px;display:block;cursor:pointer}.dm-opt.on{border-color:#b23b3b;background:#fff6f6}',
 '.dm-danger{border:1.5px solid #f3c9c9;background:#fff9f9}',
+'.dm-act{display:flex;gap:6px;align-items:center;flex:none}',
+'.dm-ib{border:1px solid #e1e6f2;background:#fff;border-radius:9px;width:34px;height:34px;font-size:15px;cursor:pointer;padding:0;line-height:1}.dm-ib:hover{background:#eef3ff;border-color:#17325c}.dm-ib.red:hover{background:#fdf1f1;border-color:#e3a3a3}',
+'.dm-sw{border:0;border-radius:99px;padding:6px 11px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}.dm-sw.on{background:#e4f5ea;color:#1e7b46}.dm-sw.off{background:#eceef3;color:#6b7280}',
+'.dm-undo{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#1c2330;color:#fff;border-radius:12px;padding:11px 14px;display:flex;gap:14px;align-items:center;z-index:100000;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:14px;max-width:92vw}.dm-undo button{background:#e6c878;border:0;border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;color:#1c2330}',
+'.dm-opt{display:flex;gap:10px;align-items:flex-start;border:1.5px solid #e1e6f2;border-radius:12px;padding:10px 12px;margin-top:8px;cursor:pointer}.dm-opt.on{border-color:#17325c;background:#eef3ff}.dm-opt input{margin-top:3px;flex:none}.dm-opt b{display:block;font-size:14px}.dm-opt span{font-size:12.5px;color:#6b7280}',
 '.dm-tools{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:12px}@media(min-width:700px){.dm-tools{grid-template-columns:repeat(5,1fr)}}',
 '.dm-tool{background:#fff;border:1px solid #ebe4cd;border-radius:14px;padding:12px 10px;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:2px;color:#1c2330}.dm-tool:hover{border-color:#17325c;box-shadow:0 2px 8px rgba(23,50,92,.1)}.dm-tool span{font-size:22px}.dm-tool b{font-size:13.5px}.dm-tool i{font-style:normal;font-size:11.5px;color:#6b7280}'
 ].join('\n'); document.head.appendChild(st); })();
@@ -223,9 +228,10 @@ function renderModel(){
   h += '<div class="dm-flex" style="margin-bottom:8px"><input class="dm-in" id="mQ" placeholder="🔍 Search by ID or any value…" value="' + esc(S.q) + '" style="flex:1;min-width:180px"><select class="dm-sel" id="mSort" style="width:auto"><option value="">Sort: default</option>' + cols.map(function(c){ return '<option value="' + esc(c) + '"' + (S.sortKey === c ? ' selected' : '') + '>Sort: ' + esc(humanize(c)) + '</option>'; }).join('') + '</select></div>';
   if(nSel) h += '<div class="dm-card dm-flex" style="padding:8px 12px"><b>' + nSel + ' selected</b><button class="dm-btn red sm" id="mDelSel">Delete selected</button><button class="dm-btn ghost sm" id="mClr">Clear</button></div>';
   if(S.err) h += '<div class="dm-card" style="color:#b23b3b">' + esc(S.err) + '</div>';
+  if(S.loaded && rows.length) h += '<label class="dm-sub" style="display:flex;gap:8px;align-items:center;margin:2px 4px 8px;cursor:pointer"><input type="checkbox" id="mSelAll" style="width:18px;height:18px"' + (rows.every(function(d){ return S.sel[d.id]; }) ? ' checked' : '') + '> Select all shown (' + rows.length + ')</label>';
   h += '<div class="dm-card" style="padding:4px 10px">' + (!S.loaded ? (window.acLoader ? window.acLoader.skeleton(5) : 'Loading…') : !rows.length ? '<div class="dm-sub" style="padding:22px;text-align:center">' + (S.docs.length ? 'Nothing matches “' + esc(S.q) + '”.' : 'No records yet.') + '</div>' : rows.map(function(d){
     var data = d.data();
-    return '<div class="dm-row" data-d="' + esc(d.id) + '"><input type="checkbox" data-sel="' + esc(d.id) + '"' + (S.sel[d.id] ? ' checked' : '') + ' style="width:18px;height:18px"><div class="dm-grow"><b>' + esc(titleOf(mm, d)) + '</b><div class="dm-kv">' + cols.slice(0, 4).map(function(c){ return '<span><b>' + esc(humanize(c)) + '</b>' + fmt(c, data[c]) + '</span>'; }).join('') + '</div><div class="dm-key">ID: ' + esc(d.id) + '</div></div><span class="dm-sub">›</span></div>'; }).join('')) +
+    return '<div class="dm-row" data-d="' + esc(d.id) + '"><input type="checkbox" data-sel="' + esc(d.id) + '"' + (S.sel[d.id] ? ' checked' : '') + ' style="width:18px;height:18px"><div class="dm-grow"><b>' + esc(titleOf(mm, d)) + '</b><div class="dm-kv">' + cols.slice(0, 4).map(function(c){ return '<span><b>' + esc(humanize(c)) + '</b>' + fmt(c, data[c]) + '</span>'; }).join('') + '</div><div class="dm-key">ID: ' + esc(d.id) + '</div></div>' + rowActions(mm, d, data) + '</div>'; }).join('')) +
     (S.loading && S.loaded ? '<div class="dm-sub" style="padding:10px">Loading…</div>' : '') + '</div>';
   h += '<div class="dm-sub" style="text-align:center;margin-bottom:6px">Showing ' + rows.length + (rows.length !== S.docs.length ? ' of ' + S.docs.length + ' loaded' : '') + ' record' + (rows.length === 1 ? '' : 's') + '</div>';
   if(S.more) h += '<div class="dm-flex" style="justify-content:center"><button class="dm-btn ghost" id="mMore">Load more</button><button class="dm-btn ghost" id="mAll">Load everything (for full search)</button></div>';
@@ -239,8 +245,40 @@ function renderModel(){
   if($('mMore')) $('mMore').onclick = function(){ loadMore(false); };
   if($('mAll')) $('mAll').onclick = function(){ var pg = progress('Loading all records…'); fetchAll(S.coll, function(n){ pg.set(n + ' loaded…'); }).then(function(ds){ S.docs = ds; S.more = false; pg.close(); renderModel(); }, function(e){ pg.close(); toast(e.message); }); };
   if($('mDelSel')) $('mDelSel').onclick = deleteSelected; if($('mClr')) $('mClr').onclick = function(){ S.sel = {}; renderModel(); };
-  m.querySelectorAll('[data-d]').forEach(function(row){ row.onclick = function(e){ if(e.target.getAttribute('data-sel') !== null) return; var d = S.docs.filter(function(x){ return x.id === row.getAttribute('data-d'); })[0]; openDoc(mm.id, d.id, d); }; });
+  var selAll = $('mSelAll'); if(selAll) selAll.onchange = function(){ rows.forEach(function(d){ if(selAll.checked) S.sel[d.id] = 1; else delete S.sel[d.id]; }); renderModel(); };
+  m.querySelectorAll('[data-act]').forEach(function(b){ b.onclick = function(e){
+    e.stopPropagation(); var id = b.closest('[data-d]').getAttribute('data-d'), d = S.docs.filter(function(x){ return x.id === id; })[0]; if(!d) return;
+    var act = b.getAttribute('data-act');
+    if(act === 'edit') openDoc(mm.id, d.id, d);
+    else if(act === 'copy') openDoc(mm.id, null, null, copyOf(d.data()));
+    else if(act === 'del'){ S.sel = {}; S.sel[id] = 1; deleteSelected(); var no = $('xNo'); if(no) no.onclick = function(){ closeSheet(); S.sel = {}; renderModel(); }; }
+    else if(act === 'toggle'){
+      var k = b.getAttribute('data-k'), patch = {}; patch[k] = !d.data()[k]; b.disabled = true;
+      db().collection(mm.id).doc(id).update(patch).then(function(){ return db().collection(mm.id).doc(id).get(); }).then(function(nd){ S.docs = S.docs.map(function(x){ return x.id === id ? nd : x; }); logAudit('Data updated', mm.title + ' ' + id + ': ' + k + ' → ' + patch[k]); renderModel(); }, function(er){ b.disabled = false; toast(friendly(er).message); });
+    }
+  }; });
+  m.querySelectorAll('[data-d]').forEach(function(row){ row.onclick = function(e){ if(e.target.getAttribute('data-sel') !== null || e.target.closest('[data-act]')) return; var d = S.docs.filter(function(x){ return x.id === row.getAttribute('data-d'); })[0]; openDoc(mm.id, d.id, d); }; });
   m.querySelectorAll('[data-sel]').forEach(function(c){ c.onchange = function(){ if(c.checked) S.sel[c.getAttribute('data-sel')] = 1; else delete S.sel[c.getAttribute('data-sel')]; renderModel(); }; });
+}
+/* one-tap actions on every row: show/hide switch, edit, copy, delete */
+var SWITCH_KEYS = ['active', 'isActive', 'visible'];
+function switchKey(data){ for(var i = 0; i < SWITCH_KEYS.length; i++) if(typeof data[SWITCH_KEYS[i]] === 'boolean') return SWITCH_KEYS[i]; return null; }
+function rowActions(mm, d, data){
+  var sk = switchKey(data), canEditOnly = mm.fixed || mm.id === 'admins', canCopy = !!TEMPLATES[mm.id];    // a copy only makes sense where the ID is generated for you (not dealers, accounts, stock …)
+  return '<div class="dm-act">' + (sk ? '<button type="button" class="dm-sw ' + (data[sk] ? 'on' : 'off') + '" data-act="toggle" data-k="' + sk + '" title="Tap to turn ' + (data[sk] ? 'off' : 'on') + '">' + (data[sk] ? '● On' : '○ Off') + '</button>' : '') +
+    '<button type="button" class="dm-ib" data-act="edit" title="Edit">✏</button>' + (canEditOnly ? '' : (canCopy ? '<button type="button" class="dm-ib" data-act="copy" title="Duplicate">📋</button>' : '') + '<button type="button" class="dm-ib red" data-act="del" title="Delete">🗑</button>') + '</div>';
+}
+function copyOf(data){
+  var o = toJson(data); delete o.id; ['name', 'title'].some(function(k){ if(typeof o[k] === 'string' && o[k]){ o[k] = o[k] + ' (copy)'; return true; } return false; });
+  return fromJson(o);
+}
+var UNDO_BLOCK = ['dealers', 'accounts', 'dist_logins', 'admins', 'login_index'];
+function showUndo(text, fn){
+  var old = $('dmUndo'); if(old) old.remove();
+  var bar = document.createElement('div'); bar.id = 'dmUndo'; bar.className = 'dm-undo'; bar.innerHTML = '<span>' + esc(text) + '</span><button type="button" id="dmUndoBtn">↩ Undo</button>';
+  document.body.appendChild(bar);
+  var t0 = setTimeout(function(){ if(bar.parentNode) bar.remove(); }, 10000);
+  $('dmUndoBtn').onclick = function(){ clearTimeout(t0); bar.remove(); fn(); };
 }
 function titleOf(mm, d){ var x = d.data(); var k = ['name', 'title', 'business', 'no', 'username', 'id', 'part'].filter(function(k){ return x[k] !== undefined && x[k] !== null && typeof x[k] !== 'object'; })[0]; return k ? String(x[k]) : d.id; }
 function deleteSelected(){
@@ -249,7 +287,8 @@ function deleteSelected(){
   var w = sheet('<h3 class="dm-h" style="color:#b23b3b">Delete ' + ids.length + ' record' + (ids.length > 1 ? 's' : '') + ' from ' + esc(mm.title) + '?</h3><div class="dm-sub">This cannot be undone. Consider exporting first.</div><div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn ghost" id="xNo">Cancel</button><button class="dm-btn red" id="xYes">Delete</button></div>');
   $('xNo').onclick = closeSheet;
   $('xYes').onclick = function(){ $('xYes').disabled = true; var coll0 = S.coll, docs0 = S.docs.filter(function(d){ return S.sel[d.id]; });
-    deleteDocs(ids.map(function(id){ return db().collection(coll0).doc(id); })).then(function(n){ return cleanLookup(coll0, docs0).then(function(){ return n; }); }).then(function(n){ S.docs = S.docs.filter(function(d){ return !S.sel[d.id]; }); S.sel = {}; S.cReq[S.coll] = 0; closeSheet(); toast('Deleted ' + n); logAudit('Data deleted', mm.title + ': ' + n + ' record(s)'); renderModel(); }, function(e){ $('xYes').disabled = false; toast(e.message); }); };
+    deleteDocs(ids.map(function(id){ return db().collection(coll0).doc(id); })).then(function(n){ return cleanLookup(coll0, docs0).then(function(){ return n; }); }).then(function(n){ S.docs = S.docs.filter(function(d){ return !S.sel[d.id]; }); S.sel = {}; S.cReq[S.coll] = 0; closeSheet(); toast('Deleted ' + n); logAudit('Data deleted', mm.title + ': ' + n + ' record(s)'); renderModel();
+      if(UNDO_BLOCK.indexOf(coll0) < 0 && docs0.length) showUndo('Deleted ' + n + ' from ' + mm.title, function(){ var pg = progress('Putting records back…'); writeMany(docs0.map(function(d){ return { coll: coll0, id: d.id, data: d.data() }; })).then(function(c){ pg.close(); S.counts = {}; S.cReq = {}; logAudit('Delete undone', mm.title + ': ' + c + ' record(s)'); toast('Restored ' + c + ' record(s)'); if(S.view === 'model' && S.coll === coll0) loadMore(true); }, function(er){ pg.close(); toast(friendly(er).message); }); }); }, function(e){ $('xYes').disabled = false; toast(e.message); }); };
 }
 /* deleting a login record must also free its login ID (otherwise “already exists” comes back) */
 function cleanLookup(coll, docs){
@@ -330,7 +369,8 @@ function tplNextId(coll){
 function openDoc(coll, id, snap, prefill){
   var mm = MODELS[coll], orig = snap ? snap.data() : (prefill || {}), isNew = !snap;
   if(isNew && !prefill && S.docs[0]){ var t = S.docs[0].data(); Object.keys(t).forEach(function(k){ var ty = typeOf(t[k]); orig[k] = ty === 'number' ? 0 : ty === 'boolean' ? false : ty === 'string' ? '' : ty === 'json' ? (Array.isArray(t[k]) ? [] : {}) : null; }); }
-  var tpl = isNew && !prefill ? TEMPLATES[coll] : null, hints = {};
+  var tplAny = isNew ? TEMPLATES[coll] : null, tpl = isNew && !prefill ? TEMPLATES[coll] : null, hints = {};
+  if(isNew && prefill && tplAny){ orig = Object.assign({}, prefill); delete orig.id; }
   if(tpl){ orig = {}; tpl.fields.forEach(function(f){ orig[f[0]] = f[2] === 'NOW' ? Date.now() : f[2]; hints[f[0]] = f[3]; }); }
   var rows = Object.keys(orig).map(function(k){ return { key: k, type: typeOf(orig[k]), val: orig[k], hint: hints[k] }; });
   var mode = 'form';
@@ -372,7 +412,7 @@ function openDoc(coll, id, snap, prefill){
     return out;
   }
   paint();
-  if(tpl && tpl.idMode === 'number'){ tplNextId(coll).then(function(n){ var el = $('eId'); if(el && !el.value) el.value = String(n); }); }
+  if(tplAny && tplAny.idMode === 'number'){ tplNextId(coll).then(function(n){ var el = $('eId'); if(el && !el.value) el.value = String(n); }); }
   $('eForm').onclick = function(){ if(mode === 'form') return; try{ var o = collect(); rows = Object.keys(o).map(function(k){ return { key: k, type: typeOf(o[k]), val: o[k] }; }); mode = 'form'; paint(); }catch(e){ $('eErr').textContent = 'The JSON is not valid: ' + e.message; } };
   $('eJson').onclick = function(){ if(mode === 'json') return; try{ collect(); mode = 'json'; paint(); }catch(e){ $('eErr').textContent = e.message; } };
   $('eNo').onclick = closeSheet;
@@ -380,12 +420,12 @@ function openDoc(coll, id, snap, prefill){
     $('eErr').textContent = '';
     var out; try{ out = collect(); }catch(e){ $('eErr').textContent = e.message; return; }
     var did = isNew ? $('eId').value.trim() : id;
-    if(tpl){
-      var miss = tpl.required.filter(function(k){ return out[k] === undefined || out[k] === null || String(out[k]).trim() === '' || (k === 'mrp' && !(Number(out[k]) > 0)); });
+    if(tplAny){
+      var miss = tplAny.required.filter(function(k){ return out[k] === undefined || out[k] === null || String(out[k]).trim() === '' || (k === 'mrp' && !(Number(out[k]) > 0)); });
       if(miss.length){ $('eErr').textContent = 'Please fill in: ' + miss.map(humanize).join(', ') + '.'; return; }
-      if(!did) did = tpl.idMode === 'slug' ? tplSlug(out.name) : String(Date.now());
+      if(!did) did = tplAny.idMode === 'slug' ? tplSlug(out.name) : String(Date.now());
       if(!did){ $('eErr').textContent = 'Please give this record a name or an ID.'; return; }
-      out.id = tpl.idMode === 'number' && /^[0-9]+$/.test(did) ? Number(did) : did;
+      out.id = tplAny.idMode === 'number' && /^[0-9]+$/.test(did) ? Number(did) : did;
     }
     if(/[\/]/.test(did || '')){ $('eErr').textContent = 'The ID cannot contain “/”.'; return; }
     var ref = did ? db().collection(coll).doc(did) : db().collection(coll).doc();
@@ -414,7 +454,7 @@ function pickFile(cb){ var fi = document.createElement('input'); fi.type = 'file
 function collectItems(json, only){          /* -> [{coll,id,data}] from any of our export shapes */
   var items = [];
   function add(coll, list){ (list || []).forEach(function(x){ if(x && x.id !== undefined) items.push({ coll: coll, id: String(x.id), data: fromJson(x.data || {}) }); }); }
-  if(json && json.collections){ Object.keys(json.collections).forEach(function(c){ if(MODELS[c] && !MODELS[c].noList && (!only || only === c)) add(c, json.collections[c]); }); }
+  if(json && json.collections){ Object.keys(json.collections).forEach(function(c){ if(MODELS[c] && !MODELS[c].noList && (!only || only === c)) add(c, json.collections[c]); }); if(!only && Array.isArray(json.loginIndex)) add('login_index', json.loginIndex); }
   else if(json && json.docs && json.collection){ if(!only || only === json.collection) add(json.collection, json.docs); }
   else if(Array.isArray(json) && only){ json.forEach(function(x, i){ var id = x && (x.id !== undefined ? x.id : null); items.push({ coll: only, id: id === null ? db().collection(only).doc().id : String(id), data: fromJson(x) }); }); }
   return items;
@@ -430,15 +470,118 @@ function importFlow(only){
   });
 }
 function allModelIds(){ var ids = []; GROUPS.forEach(function(g){ g[1].forEach(function(m){ if(!m.noList) ids.push(m.id); }); }); return ids; }
+function slugU(x){ return String(x || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, ''); }
 function buildBackup(colls, pg){
-  var out = { app: 'AshirvadConnect', kind: 'backup', exportedAt: new Date().toISOString(), collections: {} }, i = 0;
-  return colls.reduce(function(p, c){ return p.then(function(){ pg.set('Reading ' + MODELS[c].title + '…', 100 * i / colls.length); return fetchAll(c).then(function(ds){ out.collections[c] = ds.map(docObj); i++; }, function(){ out.collections[c] = []; i++; }); }); }, Promise.resolve()).then(function(){ return out; });
+  var out = { app: 'AshirvadConnect', kind: 'backup', version: 2, exportedAt: new Date().toISOString(), collections: {}, loginIndex: [], failed: [], counts: {} }, i = 0;
+  return colls.reduce(function(p, c){ return p.then(function(){
+    pg.set('Reading ' + MODELS[c].title + '…', 100 * i / colls.length);
+    return fetchAll(c).then(function(ds){ out.collections[c] = ds.map(docObj); out.counts[c] = ds.length; i++; }, function(){ out.collections[c] = []; out.failed.push(c); i++; });
+  }); }, Promise.resolve()).then(function(){
+    // sign-in lookups cannot be listed, but each one can be read by name — keep the ones that belong to staff and distributor logins
+    var names = [];
+    (out.collections.admins || []).forEach(function(d){ if(d.data && d.data.username) names.push('staff_' + slugU(d.data.username)); });
+    (out.collections.dist_logins || []).forEach(function(d){ if(d.data && d.data.username) names.push(String(d.data.username).toLowerCase()); });
+    pg.set('Reading sign-in lookups…', 98);
+    return names.reduce(function(p, n){ return p.then(function(){ return db().collection('login_index').doc(n).get().then(function(d){ if(d.exists) out.loginIndex.push({ id: n, data: toJson(d.data()) }); }, function(){}); }); }, Promise.resolve());
+  }).then(function(){ return out; });
+}
+function backupSummaryHtml(b, fileName){
+  var n = Object.keys(b.collections).reduce(function(a, c){ return a + b.collections[c].length; }, 0), cs = Object.keys(b.collections).filter(function(c){ return b.collections[c].length; });
+  return '<h3 class="dm-h">' + (b.failed.length ? '⚠ Backup saved — but not complete' : '✅ Backup downloaded') + '</h3>' +
+    '<div class="dm-sub"><b>' + n + '</b> records · <b>' + cs.length + '</b> topics' + (b.loginIndex.length ? ' · ' + b.loginIndex.length + ' sign-in lookups' : '') + '<br>File: ' + esc(fileName) + '</div>' +
+    (b.failed.length ? '<div class="dm-sub" style="color:#b23b3b;margin-top:8px">These could not be read, so they are <b>missing</b> from the file: ' + b.failed.map(function(c){ return esc(MODELS[c].title); }).join(', ') + '. Use <b>Check access</b>, publish the latest rules, and back up again.</div>' : '') +
+    '<div style="margin-top:10px;max-height:34vh;overflow:auto">' + cs.map(function(c){ return '<div class="dm-flex" style="justify-content:space-between;border-top:1px solid #f0ead8;padding:5px 0"><span>' + esc(MODELS[c].title) + '</span><b>' + b.collections[c].length + '</b></div>'; }).join('') + '</div>' +
+    '<div class="dm-sub" style="margin-top:10px">Sign-in <b>passwords</b> are kept by Firebase and cannot be included in any backup — restored logins keep working only while their sign-in still exists in Firebase.</div>' +
+    '<div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn ghost" id="bkAgain">Download again</button><button class="dm-btn" id="bkOk">Done</button></div>';
 }
 function backupAll(){
   var pg = progress('Backing up everything…');
-  buildBackup(allModelIds(), pg).then(function(b){ pg.close(); var n = Object.keys(b.collections).reduce(function(a, c){ return a + b.collections[c].length; }, 0); download('ashirvad-backup-' + stamp() + '.json', JSON.stringify(b)); toast('Backup downloaded — ' + n + ' records'); }, function(e){ pg.close(); toast(e.message); });
+  buildBackup(allModelIds(), pg).then(function(b){
+    pg.close(); var text = JSON.stringify(b), fname = 'ashirvad-backup-' + stamp() + '.json';
+    download(fname, text);
+    sheet(backupSummaryHtml(b, fname)); $('bkOk').onclick = closeSheet; $('bkAgain').onclick = function(){ download(fname, text); };
+    logAudit('Backup downloaded', Object.keys(b.counts).reduce(function(a, c){ return a + b.counts[c]; }, 0) + ' records');
+  }, function(e){ pg.close(); toast(e.message); });
 }
-function restoreFlow(){ importFlow(null); }
+
+/* ---- restore: pick a backup, choose merge or exact copy, keep a safety copy, then VERIFY what was written ---- */
+var EXACT_SKIP = ['admins', 'dist_logins', 'login_index'];   // exact copy never deletes logins (it could lock everyone out)
+function canon(v){ if(Array.isArray(v)) return '[' + v.map(canon).join(',') + ']'; if(v && typeof v === 'object') return '{' + Object.keys(v).sort().map(function(k){ return JSON.stringify(k) + ':' + canon(v[k]); }).join(',') + '}'; return JSON.stringify(v === undefined ? null : v); }
+function restoreFlow(){
+  pickFile(function(json){
+    if(!json || typeof json !== 'object' || (json.app && json.app !== 'AshirvadConnect')){ toast('That file is not an Ashirvad backup'); return; }
+    var items = collectItems(json, null);
+    if(!items.length){ toast('No records found in that file — is it a backup made with the Backup button?'); return; }
+    var by = {}, ids = {}; items.forEach(function(it){ by[it.coll] = (by[it.coll] || 0) + 1; (ids[it.coll] = ids[it.coll] || {})[it.id] = 1; });
+    var when = json.exportedAt ? new Date(json.exportedAt).toLocaleString('en-IN') : 'unknown date';
+    var warn = (json.failed && json.failed.length) ? '<div class="dm-sub" style="color:#b23b3b;margin-top:8px">⚠ This backup was made while some topics could not be read (' + json.failed.map(function(c){ return esc((MODELS[c] || {}).title || c); }).join(', ') + ') — they are not in the file.</div>' : '';
+    var w = sheet('<h3 class="dm-h">Restore from backup</h3><div class="dm-sub">Backup made <b>' + esc(when) + '</b> · <b>' + items.length + '</b> records</div>' + warn +
+      '<div style="margin-top:8px;max-height:24vh;overflow:auto">' + Object.keys(by).map(function(c){ return '<div class="dm-flex" style="justify-content:space-between;border-top:1px solid #f0ead8;padding:4px 0"><span>' + esc(MODELS[c].title) + '</span><b>' + by[c] + '</b></div>'; }).join('') + '</div>' +
+      '<label class="dm-opt on" id="rMergeL"><input type="radio" name="rMode" value="merge" checked><div><b>Merge (safest)</b><span>Add the records from the file; records with the same ID are replaced. Anything not in the file stays.</span></div></label>' +
+      '<label class="dm-opt" id="rExactL"><input type="radio" name="rMode" value="exact"><div><b>Exact copy</b><span>Make the database match the file: records that are <b>not</b> in the file are deleted (logins are never deleted).</span></div></label>' +
+      '<label class="dm-sub" style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer"><input type="checkbox" id="rSafe" checked> Download a safety copy of the current data first (recommended)</label>' +
+      '<div id="rTypeBox" style="display:none;margin-top:8px"><label class="dm-lab">Type <b>RESTORE</b> to confirm an exact copy</label><input class="dm-in" id="rType" autocomplete="off"></div>' +
+      '<div class="dm-err" id="rErr" style="color:#b23b3b;font-size:12.5px;margin-top:6px"></div>' +
+      '<div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn ghost" id="rNo">Cancel</button><button class="dm-btn" id="rYes">Restore</button></div>');
+    var mode = function(){ return w.querySelector('input[name="rMode"]:checked').value; };
+    w.querySelectorAll('input[name="rMode"]').forEach(function(r){ r.onchange = function(){ var ex = mode() === 'exact'; $('rTypeBox').style.display = ex ? '' : 'none'; $('rMergeL').classList.toggle('on', !ex); $('rExactL').classList.toggle('on', ex); if(ex) $('rSafe').checked = true; }; });
+    $('rNo').onclick = closeSheet;
+    $('rYes').onclick = function(){
+      var exact = mode() === 'exact';
+      if(exact && $('rType').value.trim() !== 'RESTORE'){ $('rErr').textContent = 'Type RESTORE exactly to confirm.'; return; }
+      var safe = $('rSafe').checked; closeSheet();
+      runRestore(items, ids, { exact: exact, safe: safe, when: when });
+    };
+  });
+}
+function runRestore(items, ids, o){
+  var pg = progress('Restoring…'), chain = Promise.resolve(), deleted = 0, colls = Object.keys(ids);
+  if(o.safe) chain = chain.then(function(){ pg.set('Saving a safety copy of the current data…', 3); return buildBackup(allModelIds(), pg).then(function(b){ download('ashirvad-before-restore-' + stamp() + '.json', JSON.stringify(b)); }); });
+  chain = chain.then(function(){ pg.set('Writing ' + items.length + ' records…', 10); return writeMany(items, function(n){ pg.set('Writing ' + n + ' / ' + items.length, 10 + 55 * n / items.length); }); });
+  // older backups carry no sign-in lookups: rebuild the staff ones from the staff records themselves
+  chain = chain.then(function(){
+    var have = {}; items.forEach(function(it){ if(it.coll === 'login_index') have[it.id] = 1; });
+    var rebuild = items.filter(function(it){ return it.coll === 'admins' && it.data && it.data.username && it.data.email && !have['staff_' + slugU(it.data.username)]; })
+      .map(function(it){ return { coll: 'login_index', id: 'staff_' + slugU(it.data.username), data: { email: it.data.email, uid: it.id, kind: 'staff' } }; });
+    return rebuild.length ? writeMany(rebuild) : null;
+  });
+  if(o.exact) chain = chain.then(function(){
+    var targets = colls.filter(function(c){ return EXACT_SKIP.indexOf(c) < 0 && !MODELS[c].noList; });
+    return targets.reduce(function(p, c, i){ return p.then(function(){
+      pg.set('Removing records that are not in the backup — ' + MODELS[c].title + '…', 68 + 14 * i / targets.length);
+      return fetchAll(c).then(function(ds){ var extra = ds.filter(function(d){ return !ids[c][d.id]; }); if(!extra.length) return;
+        return deleteDocs(extra.map(function(d){ return d.ref; })).then(function(n){ deleted += n; return cleanLookup(c, extra); }); });
+    }); }, Promise.resolve());
+  });
+  var report = { ok: 0, missing: [], different: [], extras: 0 };
+  chain = chain.then(function(){
+    var targets = colls.filter(function(c){ return !MODELS[c].noList; });
+    return targets.reduce(function(p, c, i){ return p.then(function(){
+      pg.set('Verifying ' + MODELS[c].title + '…', 85 + 14 * i / targets.length);
+      return fetchAll(c).then(function(ds){
+        var cur = {}; ds.forEach(function(d){ cur[d.id] = canon(toJson(d.data())); });
+        items.filter(function(it){ return it.coll === c; }).forEach(function(it){
+          if(cur[it.id] === undefined) report.missing.push(MODELS[c].title + ' / ' + it.id);
+          else if(cur[it.id] !== canon(toJson(it.data))) report.different.push(MODELS[c].title + ' / ' + it.id);
+          else report.ok++;
+        });
+        if(o.exact && EXACT_SKIP.indexOf(c) < 0) report.extras += ds.filter(function(d){ return !ids[c][d.id]; }).length;
+      });
+    }); }, Promise.resolve());
+  });
+  chain.then(function(){
+    pg.close(); S.counts = {}; S.cReq = {};
+    var bad = report.missing.length + report.different.length + report.extras, checked = items.filter(function(it){ return !MODELS[it.coll].noList; }).length;
+    logAudit('Backup restored', items.length + ' record(s) · ' + (o.exact ? 'exact copy' : 'merge') + (deleted ? ' · ' + deleted + ' removed' : ''));
+    sheet('<h3 class="dm-h">' + (bad ? '⚠ Restore finished with differences' : '✅ Restore complete and verified') + '</h3>' +
+      '<div class="dm-sub"><b>' + report.ok + '</b> of <b>' + checked + '</b> records checked and identical to the backup' + (o.exact ? ' · <b>' + deleted + '</b> extra record(s) removed' : '') + '.</div>' +
+      (bad ? '<div class="dm-sub" style="color:#b23b3b;margin-top:8px">' + (report.missing.length ? report.missing.length + ' missing. ' : '') + (report.different.length ? report.different.length + ' different. ' : '') + (report.extras ? report.extras + ' extra.' : '') + '<br>' + esc(report.missing.concat(report.different).slice(0, 6).join(' · ')) + '</div>' : '') +
+      '<div class="dm-sub" style="margin-top:8px">Sign-in passwords are not part of a backup; people can log in again as long as their Firebase sign-in still exists.</div>' +
+      '<div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn" id="rtOk">Done</button></div>');
+    $('rtOk').onclick = function(){ closeSheet(); if(S.view === 'model') loadMore(true); else render(); };
+  }, function(e){ pg.close(); sheet('<h3 class="dm-h" style="color:#b23b3b">Restore stopped</h3><div class="dm-sub">' + esc((friendly(e) || e).message || 'Something went wrong') + '<br>Nothing more was written. Your safety copy (if you chose one) was already downloaded. You can run the restore again — it is safe to repeat.</div><div class="dm-flex" style="margin-top:12px;justify-content:flex-end"><button class="dm-btn" id="rfOk">Close</button></div>'); $('rfOk').onclick = closeSheet; });
+}
+
 
 /* ================================================================== delete data / factory reset */
 var RG = [

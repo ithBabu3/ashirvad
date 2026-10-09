@@ -2761,6 +2761,7 @@ function renderOrdersView(){
             '<button type="button" class="cor-toggle" aria-label="'+(open?'Collapse':'Expand')+'">'+(open?'▴':'▾')+'</button>' +
           '</div>' +
         '</div>' +
+        (!open && o.status === 'cancelled' && (o.cancelNote || o.cancelledBy === 'admin') ? '<div style="padding:0 12px 10px">' + cancelNoteHtml(o) + '</div>' : '') +
         (open ? '<div class="cor-body">'+body+'</div>' : '') +
       '</div>';
     }).join(''));
@@ -7875,6 +7876,64 @@ function renderAdminConfiguration(){
   });
 }
 
+/* ---- browser-only mode: complete backup + verified restore (every ac_* item except the sign-in session) ---- */
+var LOCAL_SKIP = /^(ac_session|ac_admin_session|ac_admin_user)$/;
+function localBackupObj(){
+  var keys = {}, ls = window.localStorage;
+  for(var i = 0; i < ls.length; i++){ var k = ls.key(i); if(/^ac_/.test(k) && !LOCAL_SKIP.test(k)) keys[k] = ls.getItem(k); }
+  return { app: 'AshirvadConnect', kind: 'local-backup', version: 2, exportedAt: new Date().toISOString(), keys: keys };
+}
+function localDownload(name, text){ var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); }
+function localBackupDownload(){
+  var b = localBackupObj(), n = Object.keys(b.keys).length, fname = 'ashirvad-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  localDownload(fname, JSON.stringify(b));
+  var cnt = function(k){ try{ var v = JSON.parse(b.keys[k] || 'null'); return Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0); }catch(e){ return 0; } };
+  var w = paySheet('<h3>✅ Backup downloaded</h3><div class="sub">' + n + ' items saved in <b>' + esc(fname) + '</b></div><div class="pay-block" style="margin-top:10px"><div class="pb-row"><span>Dealers</span><b>' + cnt('ac_users') + '</b></div><div class="pb-row"><span>Orders</span><b>' + cnt('ac_orders') + '</b></div><div class="pb-row"><span>Products</span><b>' + cnt('ac_products') + '</b></div></div><div class="acpay-row"><button type="button" class="acpay-btn" id="lbOk">Done</button></div>');
+  w.querySelector('#lbOk').onclick = paySheetClose;
+}
+function localRestoreFlow(){
+  var fi = document.createElement('input'); fi.type = 'file'; fi.accept = '.json,application/json';
+  fi.onchange = function(){
+    var f = fi.files && fi.files[0]; if(!f) return;
+    var fr = new FileReader();
+    fr.onload = function(){
+      var j; try{ j = JSON.parse(fr.result); }catch(e){ showToast('That file is not a valid backup'); return; }
+      var keys = null, legacy = false;
+      if(j && j.app === 'AshirvadConnect' && j.kind === 'local-backup' && j.keys && typeof j.keys === 'object') keys = j.keys;
+      else if(j && j.app === 'AshirvadConnect' && (j.products || j.orders || j.dealers)){          // older “Full backup” files
+        legacy = true; keys = {};
+        var map = { products: 'ac_products', orders: 'ac_orders', dealers: 'ac_users', banners: 'ac_banners', offers: 'ac_offers', broadcasts: 'ac_broadcasts', settings: 'ac_settings' };
+        Object.keys(map).forEach(function(k){ if(j[k] !== undefined) keys[map[k]] = JSON.stringify(j[k]); });
+      }
+      keys = keys || {}; Object.keys(keys).forEach(function(k){ if(!/^ac_/.test(k) || LOCAL_SKIP.test(k) || typeof keys[k] !== 'string') delete keys[k]; });
+      var names = Object.keys(keys); if(!names.length){ showToast('No data found in that file'); return; }
+      var cnt = function(k){ try{ var v = JSON.parse(keys[k] || 'null'); return Array.isArray(v) ? v.length : (v && typeof v === 'object' ? Object.keys(v).length : 0); }catch(e){ return 0; } };
+      var when = j.exportedAt ? new Date(j.exportedAt).toLocaleString('en-IN') : 'unknown date';
+      var w = paySheet('<h3>Restore from backup</h3><div class="sub">Backup made <b>' + esc(when) + '</b> · <b>' + names.length + '</b> items' + (legacy ? ' (older backup format)' : '') + '</div>' +
+        '<div class="pay-block" style="margin-top:10px"><div class="pb-row"><span>Dealers</span><b>' + cnt('ac_users') + '</b></div><div class="pb-row"><span>Orders</span><b>' + cnt('ac_orders') + '</b></div><div class="pb-row"><span>Products</span><b>' + cnt('ac_products') + '</b></div></div>' +
+        '<label class="l" style="display:flex;gap:8px;align-items:center;margin-top:10px"><input type="checkbox" id="lrSafe" checked style="width:auto"> Download a safety copy of the current data first</label>' +
+        (legacy ? '' : '<label class="l" style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="lrExact" style="width:auto"> Exact copy — also remove data that is not in this file</label>') +
+        '<div class="acpay-err" id="lrErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="lrNo">Cancel</button><button type="button" class="acpay-btn green" id="lrYes">Restore</button></div>');
+      w.querySelector('#lrNo').onclick = paySheetClose;
+      w.querySelector('#lrYes').onclick = function(){
+        var exact = !!(w.querySelector('#lrExact') && w.querySelector('#lrExact').checked), safe = w.querySelector('#lrSafe').checked;
+        if(exact && !confirm('Exact copy removes everything that is not in the backup file. Continue?')) return;
+        if(safe) localDownload('ashirvad-before-restore-' + new Date().toISOString().slice(0, 10) + '.json', JSON.stringify(localBackupObj()));
+        var ls = window.localStorage, toRemove = [];
+        if(exact) for(var i = 0; i < ls.length; i++){ var k = ls.key(i); if(/^ac_/.test(k) && !LOCAL_SKIP.test(k) && names.indexOf(k) < 0) toRemove.push(k); }
+        toRemove.forEach(function(k){ ls.removeItem(k); });
+        var failed = [];
+        names.forEach(function(k){ try{ ls.setItem(k, keys[k]); }catch(e){ failed.push(k); } });
+        var bad = names.filter(function(k){ return ls.getItem(k) !== keys[k]; });                     // read everything back and compare
+        paySheetClose();
+        var r = paySheet('<h3>' + (bad.length ? '⚠ Restore finished with differences' : '✅ Restore complete and verified') + '</h3><div class="sub"><b>' + (names.length - bad.length) + '</b> of <b>' + names.length + '</b> items checked and identical to the backup' + (exact ? ' · ' + toRemove.length + ' other item(s) removed' : '') + '.</div>' + (bad.length ? '<div class="acpay-err">Could not store: ' + esc(bad.slice(0, 6).join(', ')) + (failed.length ? ' (browser storage full?)' : '') + '</div>' : '') + '<div class="acpay-row"><button type="button" class="acpay-btn green" id="lrDone">Reload</button></div>');
+        r.querySelector('#lrDone').onclick = function(){ location.reload(); };
+      };
+    };
+    fr.readAsText(f);
+  };
+  fi.click();
+}
 /* Data tab when there is no cloud database (browser-only mode): the same idea — backup, reset, in one place */
 function renderLocalData(){
   var adminMain = document.getElementById('adminMain'); if(!adminMain) return;
@@ -7882,10 +7941,12 @@ function renderLocalData(){
   adminMain.innerHTML = '<div class="admin-toolbar"><h2>🗄 Data</h2><span class="ac-sub">Stored in this browser only</span></div>' +
     '<div class="cfg-sec"><h3>What is stored</h3><div class="cfg-list">' + rows.map(function(r){ return '<div class="cfg-item" style="cursor:default"><div class="cfg-tx"><b>' + r[0] + '</b></div><b>' + r[1] + '</b></div>'; }).join('') + '</div></div>' +
     '<div class="cfg-sec"><h3>Tools</h3><div class="cfg-list">' +
-      '<div class="cfg-item" id="ldBackup"><div class="cfg-ic">💾</div><div class="cfg-tx"><b>Full backup</b><span>Download orders, dealers, catalogue and settings as a file.</span></div><div class="cfg-go">›</div></div>' +
+      '<div class="cfg-item" id="ldBackup"><div class="cfg-ic">💾</div><div class="cfg-tx"><b>Full backup</b><span>Download everything stored here — dealers, logins, orders, catalogue, settings — as one file.</span></div><div class="cfg-go">›</div></div>' +
+      '<div class="cfg-item" id="ldRestore"><div class="cfg-ic">⬆</div><div class="cfg-tx"><b>Restore from a backup</b><span>Put back a file you downloaded with Full backup. Everything is checked afterwards.</span></div><div class="cfg-go">›</div></div>' +
       '<div class="cfg-item" id="ldReset"><div class="cfg-ic">☢</div><div class="cfg-tx"><b style="color:#b23b3b">Delete all data</b><span>Wipe everything stored in this browser and start fresh. Download a backup first.</span></div><div class="cfg-go">›</div></div>' +
     '</div></div>';
-  document.getElementById('ldBackup').onclick = exportFullBackup;
+  document.getElementById('ldBackup').onclick = localBackupDownload;
+  document.getElementById('ldRestore').onclick = localRestoreFlow;
   document.getElementById('ldReset').onclick = function(){
     var w = paySheet('<h3 style="color:#b23b3b">☢ Delete all data?</h3><div class="sub">Everything in this browser (dealers, orders, catalogue, settings) is removed. This cannot be undone.</div><label class="l">Type <b>DELETE</b> to confirm</label><input id="ldTxt" autocomplete="off"><div class="acpay-err" id="ldErr"></div><div class="acpay-row"><button type="button" class="acpay-btn ghost" id="ldNo">Cancel</button><button type="button" class="acpay-btn red" id="ldYes">Delete everything</button></div>');
     w.querySelector('#ldNo').onclick = paySheetClose;
