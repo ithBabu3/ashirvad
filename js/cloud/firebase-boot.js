@@ -47,7 +47,7 @@ function startApp(){
   return loadScript(APP_SRC)
     .then(function(){
       if(CLOUD.role !== 'admin') return;
-      return Promise.all(['admin-distributors.js', 'admin-data.js'].map(function(f){
+      return Promise.all(['admin-distributors.js', 'admin-data.js', 'admin-telegram.js'].map(function(f){
         return loadScript(APP_SRC.replace('app.js', f)).catch(function(e){ console.error('[AshirvadConnect] could not load ' + f + ' — is the file named exactly js/' + f + ' ?', e); });
       }));
     })

@@ -4550,6 +4550,7 @@ function renderAdmin(){
   else if(currentAdminTab === 'reports') renderAdminReports();    
   else if(currentAdminTab === 'distributors' && window.__acAdminTabs && window.__acAdminTabs.distributors) window.__acAdminTabs.distributors();
   else if(currentAdminTab === 'data'){ if(window.__acAdminTabs && window.__acAdminTabs.data) window.__acAdminTabs.data(); else renderLocalData(); }
+  else if(currentAdminTab === 'notifications' && window.__acAdminTabs && window.__acAdminTabs.notifications) window.__acAdminTabs.notifications();
 }
 
 /* ---------------- Dashboard tab ---------------- */

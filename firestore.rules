@@ -267,5 +267,18 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
+    // ---- Telegram notification settings (bot token + recipients). OWNER ONLY — never visible to dealers, distributors or other staff. ----
+    // private/telegram        : written by the owner from Admin > Notifications
+    // private/telegram_status : written by the Cloud Function (server) after each alert; the owner can read it
+    match /private/{doc} {
+      allow read, write: if isOwner();
+    }
+    // ---- "already announced" markers. CREATE-ONLY: the first one to create the marker sends the Telegram alert, everyone else is refused and skips. ----
+    match /notify_sent/{id} {
+      allow create: if canWrite();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
   }
 }
